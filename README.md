@@ -1,4 +1,4 @@
-# 🛡️ Hybrid Sentinel — Financial Forensics Engine
+# 🛡️ MoneyMal — Financial Forensics Engine
 
 > Graph-based money muling detection engine for the **RIFT 2026 Hackathon** — Graph Theory / Financial Crime Detection Track.
 
@@ -8,7 +8,7 @@
 ![NetworkX](https://img.shields.io/badge/NetworkX-Graph_Theory-orange)
 ![scikit-learn](https://img.shields.io/badge/scikit--learn-ML-F7931E?logo=scikitlearn&logoColor=white)
 
-🔗 **Live Demo:** [coming soon — deploy to Render/Railway]
+🔗 **Live Demo:** 
 
 ---
 
