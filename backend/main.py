@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from engine import ForensicsEngine
+from backend.engine import ForensicsEngine
 
 app = FastAPI(
     title="Hybrid Sentinel API",
