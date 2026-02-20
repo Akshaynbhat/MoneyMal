@@ -258,9 +258,9 @@ python generate_stress_test.py
 
 ## Team Members
 
-Bhuvan Bapat
-Manas Prashant
-Akshay N Bhat
+Bhuvan Bapat,
+Manas Prashant,
+Akshay N Bhat,
 Amogh Basavaraj
 
 ---
