@@ -1,13 +1,14 @@
 import axios from 'axios';
 
 const API = axios.create({
-    baseURL: 'https://moneymal-2.onrender.com/api',
+    baseURL: 'https://moneymal-3.onrender.com/api',
     timeout: 120000,
 });
 
 export async function analyzeFile(file, onProgress) {
     const form = new FormData();
     form.append('file', file);
+
     const res = await API.post('/analyze', form, {
         headers: { 'Content-Type': 'multipart/form-data' },
         onUploadProgress: (e) => {
@@ -16,6 +17,7 @@ export async function analyzeFile(file, onProgress) {
             }
         },
     });
+
     return res.data;
 }
 
