@@ -1,6 +1,6 @@
 # 🛡️ MoneyMal — Financial Forensics Engine
 
-> Graph-based money muling detection engine for the **RIFT 2026 Hackathon** — Graph Theory / Financial Crime Detection Track.
+> Graph-based money muling detection engine / Financial Crime Detection 
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green?logo=fastapi&logoColor=white)
@@ -8,8 +8,8 @@
 ![NetworkX](https://img.shields.io/badge/NetworkX-Graph_Theory-orange)
 ![scikit-learn](https://img.shields.io/badge/scikit--learn-ML-F7931E?logo=scikitlearn&logoColor=white)
 
-🔗 **Live Demo:** 
-
+🔗 **Deployment link** 
+https://money-mal-nxch.vercel.app/
 ---
 
 ## 📋 Table of Contents
