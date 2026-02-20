@@ -219,10 +219,6 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:5173** in your browser.
-
----
-
 ## Usage Instructions
 
 1. **Open** `http://localhost:5173` in your browser
@@ -262,9 +258,10 @@ python generate_stress_test.py
 
 ## Team Members
 
-| Name | Role |
-|---|---|
-| Bhuvan | Lead Developer |
+Bhuvan Bapat
+Manas Prashant
+Akshay N Bhat
+Amogh Basavaraj
 
 ---
 
@@ -274,5 +271,4 @@ MIT
 
 ---
 
-*Built for RIFT 2026 Hackathon — Graph Theory / Financial Crime Detection Track*
-*Follow the money.* 💰
+
