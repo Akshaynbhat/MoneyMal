@@ -28,7 +28,7 @@ https://money-mal-nxch.vercel.app/
 
 ## Overview
 
-Hybrid Sentinel is a web-based financial forensics engine that processes transaction CSV data and exposes money muling networks through graph analysis and interactive visualization. It combines **multi-constraint graph algorithms** with **machine learning anomaly detection** to identify circular fund routing, smurfing patterns, and layered shell networks — while actively suppressing false positives from merchants and payroll accounts.
+MoneyMal is a web-based financial forensics engine that processes transaction CSV data and exposes money muling networks through graph analysis and interactive visualization. It combines **multi-constraint graph algorithms** with **machine learning anomaly detection** to identify circular fund routing, smurfing patterns, and layered shell networks — while actively suppressing false positives from merchants and payroll accounts.
 
 ### Key Features
 
