@@ -47,21 +47,33 @@ export default function TransactionsPage() {
         return list;
     }, [result, search, filterRisk, sortBy, sortDir]);
 
-    const exportCSV = () => {
-        const headers = ['Account ID', 'Suspicion Score', 'Patterns', 'Ring ID', 'Explanation'];
-        const rows = accounts.map((a) => [
-            a.account_id,
-            a.suspicion_score,
-            a.detected_patterns.join('; '),
-            a.ring_id || '',
-            a.explanation || '',
-        ]);
-        const csv = [headers, ...rows].map((r) => r.map((c) => `"${c}"`).join(',')).join('\n');
-        const blob = new Blob([csv], { type: 'text/csv' });
+    const exportJSON = () => {
+        const output = {
+            suspicious_accounts: (result.suspicious_accounts || []).map((a) => ({
+                account_id: a.account_id,
+                suspicion_score: a.suspicion_score,
+                detected_patterns: a.detected_patterns || [],
+                ring_id: a.ring_id || null,
+            })),
+            fraud_rings: (result.fraud_rings || []).map((r) => ({
+                ring_id: r.ring_id,
+                member_accounts: r.member_accounts || r.accounts || [],
+                pattern_type: r.pattern_type || r.type || 'unknown',
+                risk_score: r.risk_score ?? r.score ?? 0,
+            })),
+            summary: {
+                total_accounts_analyzed: result.summary?.total_accounts_analyzed ?? 0,
+                suspicious_accounts_flagged: result.summary?.suspicious_accounts_flagged ?? (result.suspicious_accounts || []).length,
+                fraud_rings_detected: result.summary?.fraud_rings_detected ?? (result.fraud_rings || []).length,
+                processing_time_seconds: result.summary?.processing_time_seconds ?? 0,
+            },
+        };
+        const jsonStr = JSON.stringify(output, null, 2);
+        const blob = new Blob([jsonStr], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'suspicious_accounts.csv';
+        a.download = 'analysis_results.json';
         a.click();
         URL.revokeObjectURL(url);
     };
@@ -131,8 +143,8 @@ export default function TransactionsPage() {
                         </button>
                     ))}
                 </div>
-                <button className="btn-primary" onClick={exportCSV} style={{ padding: '6px 14px', fontSize: '0.7rem' }}>
-                    ⬇ Export CSV
+                <button className="btn-primary" onClick={exportJSON} style={{ padding: '6px 14px', fontSize: '0.7rem' }}>
+                    ⬇ Export JSON
                 </button>
             </motion.div>
 
