@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const API = axios.create({
-    baseURL: '/api',
+    baseURL: 'https://moneymal-2.onrender.com/api',
     timeout: 120000,
 });
 
