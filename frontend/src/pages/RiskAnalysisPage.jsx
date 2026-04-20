@@ -263,14 +263,16 @@ export default function RiskAnalysisPage() {
                     <h3 style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: '0.8rem', color: 'var(--color-text-secondary)', marginBottom: 16, letterSpacing: '0.06em' }}>
                         INTELLIGENCE SUMMARY
                     </h3>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                         {[
                             { label: 'Total Accounts', value: result.summary.total_accounts_analyzed, color: 'var(--color-accent)' },
-                            { label: 'Flagged', value: result.summary.suspicious_accounts_flagged, color: 'var(--color-risk-red)' },
+                            { label: 'Flagged', value: result.summary.suspicious_accounts_flagged, color: 'var(--color-text-primary)' },
+                            { label: 'Mandatory BLOCK', value: accounts.filter(a => a.decision === 'BLOCK').length, color: 'var(--color-risk-red)' },
+                            { label: 'Manual REVIEW', value: accounts.filter(a => a.decision === 'REVIEW').length, color: 'var(--color-risk-orange)' },
                             { label: 'Fraud Rings', value: result.summary.fraud_rings_detected, color: 'var(--color-risk-orange)' },
                             { label: 'Processing', value: `${result.summary.processing_time_seconds.toFixed(2)}s`, color: 'var(--color-risk-green)' },
-                            { label: 'High Risk', value: accounts.filter(a => a.suspicion_score > 70).length, color: 'var(--color-risk-red)' },
-                            { label: 'Avg Score', value: accounts.length ? (accounts.reduce((s, a) => s + a.suspicion_score, 0) / accounts.length).toFixed(1) : '0', color: 'var(--color-accent)' },
+                            { label: 'Avg ML Score', value: accounts.length ? (accounts.reduce((s, a) => s + a.suspicion_score, 0) / accounts.length).toFixed(1) : '0', color: 'var(--color-accent)' },
+                            { label: 'Hub Nodes', value: accounts.filter(a => a.role === 'HUB').length, color: '#9B59B6' },
                         ].map((s) => (
                             <div key={s.label} className="glass-card p-3 text-center">
                                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: '1.3rem', fontWeight: 700, color: s.color }}>{s.value}</div>
@@ -280,6 +282,58 @@ export default function RiskAnalysisPage() {
                     </div>
                 </motion.div>
             </div>
+
+            {/* Suspicious Accounts Detailed Table */}
+            <motion.div
+                className="glass-card p-5 mt-5"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.7 }}
+            >
+                <h3 style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: '0.8rem', color: 'var(--color-text-secondary)', marginBottom: 16, letterSpacing: '0.06em' }}>
+                    SUSPICIOUS ACCOUNTS INDEX
+                </h3>
+                <div style={{ maxHeight: 400, overflow: 'auto' }}>
+                    <table className="data-table">
+                        <thead>
+                            <tr>
+                                <th>Account ID</th>
+                                <th>Score</th>
+                                <th>Role</th>
+                                <th>Decision</th>
+                                <th>Flags</th>
+                                <th>Ring ID</th>
+                                <th>GAT %</th>
+                                <th>LSTM %</th>
+                                <th>EIF %</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {accounts.map((acc, i) => (
+                                <tr key={i}>
+                                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--color-accent)' }}>{acc.account_id}</td>
+                                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', fontWeight: 'bold' }}>{acc.suspicion_score.toFixed(1)}</td>
+                                    <td><span className={`px-2 py-1 text-[10px] rounded font-mono border uppercase ${acc.role === 'HUB' ? 'bg-purple-500/20 text-purple-400 border-purple-500/30' : acc.role === 'BRIDGE' ? 'bg-orange-500/20 text-orange-400 border-orange-500/30' : 'bg-slate-500/20 text-slate-400 border-slate-500/30'}`}>{acc.role || 'LEAF'}</span></td>
+                                    <td>
+                                        <span className={`px-2 py-1 text-[10px] rounded font-mono border uppercase ${acc.decision === 'BLOCK' ? 'bg-red-500/20 text-red-400 border border-red-500/30' : acc.decision === 'REVIEW' ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' : 'bg-green-500/20 text-green-400 border border-green-500/30'}`}>
+                                            {acc.decision || 'APPROVE'}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <div className="flex gap-1 flex-wrap">
+                                            {(acc.flag_hits || []).map(f => <span key={f} className="pattern-chip" style={{fontSize: '0.65rem', padding: '2px 4px', whiteSpace: 'nowrap'}}>{f}</span>)}
+                                        </div>
+                                    </td>
+                                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: 'var(--color-text-dim)' }}>{acc.ring_id || 'NONE'}</td>
+                                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem' }}>{acc.ml_scores?.gat?.toFixed(1) || '0.0'}</td>
+                                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem' }}>{acc.ml_scores?.lstm?.toFixed(1) || '0.0'}</td>
+                                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem' }}>{acc.ml_scores?.eif?.toFixed(1) || '0.0'}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </motion.div>
         </div>
     );
 }

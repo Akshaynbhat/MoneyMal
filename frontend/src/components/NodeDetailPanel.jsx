@@ -1,11 +1,36 @@
 import { motion } from 'framer-motion';
+import { useAppContext } from '../App';
 
 export default function NodeDetailPanel({ node, onClose }) {
+    const { result } = useAppContext();
     if (!node) return null;
 
+    const fullAcc = result?.suspicious_accounts?.find(a => a.account_id === node.id) || {};
+    const ml_scores = fullAcc.ml_scores || {};
+    const flag_hits = fullAcc.flag_hits || [];
+    
     const score = node.suspicion_score || 0;
     const scoreColor = score > 70 ? 'var(--color-risk-red)' : score > 30 ? 'var(--color-risk-orange)' : 'var(--color-risk-green)';
-    const riskLabel = score > 70 ? 'HIGH RISK MULE' : score > 30 ? 'SUSPICIOUS' : 'SAFE';
+    const riskLabel = node.decision === 'BLOCK' ? 'MANDATORY BLOCK' : node.decision === 'REVIEW' ? 'MANUAL REVIEW' : 'P-SAFE';
+    const role = node.role || 'LEAF';
+
+    const renderBar = (label, value, color) => (
+        <div className="mb-3">
+            <div className="flex justify-between text-[10px] uppercase font-mono text-slate-400 mb-1">
+                <span>{label}</span>
+                <span style={{ color }}>{value.toFixed(1)}</span>
+            </div>
+            <div className="h-1.5 bg-black/40 rounded-full overflow-hidden">
+                <motion.div 
+                    initial={{ width: 0 }}
+                    animate={{ width: `${Math.min(100, Math.max(0, value))}%` }}
+                    transition={{ duration: 1, ease: "easeOut" }}
+                    className="h-full rounded-full shadow-[0_0_8px_rgba(0,0,0,0.5)]"
+                    style={{ backgroundColor: color }}
+                />
+            </div>
+        </div>
+    );
 
     return (
         <motion.div
@@ -28,13 +53,22 @@ export default function NodeDetailPanel({ node, onClose }) {
             </button>
 
             {/* Header */}
-            <div style={{ marginBottom: 24 }}>
+            <div style={{ marginBottom: 24, position: 'relative' }}>
                 <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--color-text-dim)', letterSpacing: '0.1em', marginBottom: 4 }}>
                     ACCOUNT DETAILS
                 </p>
-                <h2 style={{ fontFamily: 'var(--font-mono)', fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-accent)' }}>
-                    {node.id}
-                </h2>
+                <div className="flex items-center gap-2">
+                    <h2 style={{ fontFamily: 'var(--font-mono)', fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-accent)' }}>
+                        {node.id}
+                    </h2>
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono border uppercase
+                        ${role === 'HUB' ? 'bg-purple-500/20 text-purple-400 border-purple-500/30' : 
+                          role === 'BRIDGE' ? 'bg-orange-500/20 text-orange-400 border-orange-500/30' : 
+                          'bg-slate-500/20 text-slate-400 border-slate-500/30'}`}
+                    >
+                        {role}
+                    </span>
+                </div>
             </div>
 
             {/* Risk Score Card */}
@@ -90,17 +124,32 @@ export default function NodeDetailPanel({ node, onClose }) {
                 </div>
             </div>
 
-            {/* Patterns */}
+            {/* ML Subcomponents */}
+            {Object.keys(ml_scores).length > 0 && (
+                <div className="glass-card p-4 mb-5">
+                    <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--color-text-dim)', letterSpacing: '0.08em', marginBottom: 12 }}>
+                        ML PILLAR BREAKDOWN
+                    </p>
+                    {renderBar("GAT (Topology)", ml_scores.gat || 0, "#9B59B6")}
+                    {renderBar("LSTM (Timing)", ml_scores.lstm || 0, "#3498DB")}
+                    {renderBar("EIF (Anomaly)", ml_scores.eif || 0, "#F1C40F")}
+                    {renderBar("RBI Rules", ml_scores.rules || 0, "#E74C3C")}
+                </div>
+            )}
+
+            {/* Patterns & Flags */}
             <div className="mb-5">
                 <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--color-text-dim)', letterSpacing: '0.08em', marginBottom: 10 }}>
-                    DETECTED PATTERNS
+                    DETECTED SIGNATURES
                 </p>
                 <div className="flex flex-wrap gap-2">
-                    {(node.detected_patterns || []).length > 0 ? (
-                        node.detected_patterns.map((p) => (
-                            <span key={p} className="pattern-chip" style={{ padding: '4px 10px' }}>{p}</span>
-                        ))
-                    ) : (
+                    {flag_hits.map((p) => (
+                        <span key={p} className="px-2 py-1 rounded text-xs font-mono bg-red-500/20 text-red-400 border border-red-500/30">{p}</span>
+                    ))}
+                    {(node.detected_patterns || []).map((p) => (
+                        <span key={p} className="pattern-chip" style={{ padding: '4px 10px' }}>{p}</span>
+                    ))}
+                    {flag_hits.length === 0 && (!node.detected_patterns || node.detected_patterns.length === 0) && (
                         <span style={{ color: 'var(--color-text-dim)', fontSize: '0.75rem', fontFamily: 'var(--font-mono)' }}>
                             No patterns detected
                         </span>

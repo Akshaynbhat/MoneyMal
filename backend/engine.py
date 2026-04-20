@@ -32,6 +32,10 @@ import pandas as pd
 import networkx as nx
 from sklearn.ensemble import IsolationForest
 
+from flags import run_all_flags
+from roles import assign_roles
+from ml_scoring import calculate_ml_scores
+
 
 # ====================================================================== #
 #  UNION-FIND (Disjoint Set) for merging overlapping cycles              #
@@ -1404,159 +1408,52 @@ class ForensicsEngine:
             self.account_patterns[acc] = kept
 
     # ================================================================== #
-    #  PHASE 5: COMPOSITE RISK SCORING (Score Before Suppression)          #
+    #  PHASE 5: COMPOSITE RISK SCORING AND ROLES                           #
     # ================================================================== #
     def calculate_suspicion_scores(self) -> None:
         """
-        Phase 5: Composite risk scoring with weighted pattern contributions.
-        Scoring runs AFTER all detection and consolidation.
-        
-        risk_score = cycle_weight * cycle_score
-                   + smurf_weight * smurf_score
-                   + shell_weight * shell_score
-                   + structural_weight * fan_in_out_score
-        
-        Suppression applied AFTER scoring:
-          - Only if merchant signature strong AND payroll periodicity detected
-          - AND no fraud pattern score > threshold
-          - Strong structural fraud CANNOT be overridden by suppression
+        Phase 5: Apply new 4-pillar ML scoring + Rules + Roles
         """
-        if self.G is None:
+        if self.G is None or not list(self.G.nodes()):
             return
 
+        # 1. Run 10 RBI Rules
         nodes = list(self.G.nodes())
-        if not nodes:
-            return
+        flags_by_acc = run_all_flags(self.df, self.G, nodes)
+        
+        # Add flags to account patterns
+        for acc, flags in flags_by_acc.items():
+            for f in flags:
+                self.account_patterns[acc].add(f)
 
-        # Feature extraction for IsolationForest
-        features = []
-        for n in nodes:
-            vol_in = sum(float(d.get("amount", 0)) for _, _, d in self.G.in_edges(n, data=True))
-            vol_out = sum(float(d.get("amount", 0)) for _, _, d in self.G.out_edges(n, data=True))
-            features.append([self.G.in_degree(n), self.G.out_degree(n), vol_in, vol_out])
+        # 2. Assign Roles securely for all rings
+        roles_by_acc = {}
+        for ring in self.fraud_rings:
+            ring_roles = assign_roles(self.G, ring["member_accounts"])
+            roles_by_acc.update(ring_roles)
 
-        feature_df = pd.DataFrame(
-            features,
-            columns=["in_degree", "out_degree", "total_volume_in", "total_volume_out"],
-            index=nodes,
-        )
-
-        n_samples = len(feature_df)
-        contamination = 0.05 if n_samples >= 20 else "auto"
-        iso = IsolationForest(contamination=contamination, random_state=42, n_estimators=100)
-        iso.fit(feature_df.values)
-        raw_scores = iso.decision_function(feature_df.values)
-
-        min_s, max_s = raw_scores.min(), raw_scores.max()
-        if max_s - min_s > 0:
-            normalized = (max_s - raw_scores) / (max_s - min_s)
-        else:
-            normalized = np.zeros(len(raw_scores))
-
-        anomaly_bonus = normalized * 15.0
-
-        # Phase 5: Composite weighted scoring
-        pattern_weights = {
-            "cycle_length_3": 30,
-            "cycle_length_4": 25,
-            "cycle_length_5": 20,
-            "shell_account": 20,
-            "smurfing": 15,
-            "fan_in": 15,
-            "fan_out": 15,
-            "structuring": 12,
-            "high_velocity": 5,
-            "high_velocity_24h": 10,
-            "low_variance": 10,
-        }
-
-        STRUCTURAL_PATTERNS = {
-            "cycle_length_3", "cycle_length_4", "cycle_length_5",
-            "shell_account", "smurfing", "fan_in", "fan_out", "structuring",
-            "low_variance",
-        }
-
-        # Strong fraud patterns that cannot be suppressed
-        # Note: fan_in/fan_out excluded — they can arise from legitimate patterns
-        STRONG_FRAUD_PATTERNS = {
-            "cycle_length_3", "cycle_length_4", "cycle_length_5",
-            "shell_account", "smurfing",
-        }
-
-        # Score each node (BEFORE suppression)
-        preliminary_scores: dict[str, float] = {}
-        for idx, node in enumerate(nodes):
-            patterns = self.account_patterns.get(node, set())
-
-            # Base pattern score (composite weighted sum)
-            score = sum(pattern_weights.get(p, 0) for p in patterns)
-            score = min(score, 70.0)
-
-            has_structural = bool(patterns & STRUCTURAL_PATTERNS)
-
-            # Velocity bonus (only if structural pattern exists)
-            if node in self._velocity_accounts and has_structural:
-                score += 10
-            elif node in self._velocity_24h_accounts and has_structural:
-                score += 5
-
-            # IsolationForest anomaly bonus
-            score += float(anomaly_bonus[idx])
-            preliminary_scores[node] = score
-
-            # --- Build explanation string ---
-            parts = []
-            for p in sorted(patterns):
-                w = pattern_weights.get(p, 0)
-                if w > 0:
-                    label = p.replace("_", " ").title()
-                    parts.append(f"{label} (+{w} pts)")
-            if node in self._velocity_accounts and has_structural:
-                parts.append("High velocity (+10 pts)")
-            if parts:
-                parts.append(f"Score: {round(max(0.0, min(100.0, score)), 1)}")
-            self._explanations[node] = ". ".join(parts) + "." if parts else ""
-
-        # Second pass: isolation cluster bonus
+        # 3. Calculate 4-Pillar ML Scores
+        self.ml_results = calculate_ml_scores(self.df, self.G, nodes, flags_by_acc, roles_by_acc)
+        
+        # Map back to engine state
         for node in nodes:
-            if preliminary_scores[node] <= 0:
-                continue
-            neighbors = set(self.G.predecessors(node)) | set(self.G.successors(node))
-            flagged_neighbors = sum(
-                1 for n in neighbors if preliminary_scores.get(n, 0) > 30
-            )
-            if flagged_neighbors >= 2:
-                preliminary_scores[node] += 8
-                self.account_patterns[node].add("isolation_cluster")
-
-        # ---- PHASE 5: SUPPRESSION STAGE (applied AFTER scoring) ------
-        for node in nodes:
-            score = preliminary_scores[node]
-            patterns = self.account_patterns.get(node, set())
-
-            # Accounts with ONLY velocity or low_variance → score = 0
-            active_patterns = patterns - {"isolation_cluster", "payroll", "merchant"}
-            if active_patterns <= {"high_velocity", "high_velocity_24h", "low_variance"}:
-                score = 0.0
-
-            # Phase 5: Suppression — only suppress if:
-            #   1. Account is immune (payroll/merchant)
-            #   2. AND no strong fraud pattern is present
-            has_strong_fraud = bool(patterns & STRONG_FRAUD_PATTERNS)
-            if node in self._immune_accounts and not has_strong_fraud:
-                score = 0.0
-
-            # High-degree hub suppression (from old code)
-            # Commercial hubs with degree > 50, long activity, high CV
-            if node in self._high_degree_hubs and not has_strong_fraud:
-                score = 0.0
-
-            # Apply global flag threshold
-            score = round(max(0.0, min(100.0, score)), 1)
-            if score < self.FLAG_THRESHOLD:
-                score = 0.0
-
-            self.suspicion_scores[node] = score
+            res = self.ml_results.get(node)
+            if res and res["score"] > 0:
+                # Apply suppression as per previous logic (immune accounts with no strong fraud = 0)
+                STRONG_FRAUD_PATTERNS = {
+                    "cycle_length_3", "cycle_length_4", "cycle_length_5",
+                    "shell_account", "smurfing", "F1", "F5", "F10"
+                }
+                has_strong_fraud = bool(self.account_patterns.get(node, set()) & STRONG_FRAUD_PATTERNS)
+                
+                if node in self._immune_accounts and not has_strong_fraud:
+                    self.suspicion_scores[node] = 0.0
+                elif node in self._high_degree_hubs and not has_strong_fraud:
+                    self.suspicion_scores[node] = 0.0
+                else:
+                    self.suspicion_scores[node] = res["score"]
+            else:
+                self.suspicion_scores[node] = 0.0
 
     # ================================================================== #
     #  JSON GENERATION                                                     #
@@ -1568,15 +1465,21 @@ class ForensicsEngine:
                 account_rings[acc].append(ring["ring_id"])
 
         suspicious_accounts = []
-        for acc, score in self.suspicion_scores.items():
-            if score <= 0:
+        for acc in self.G.nodes() if self.G else []:
+            score = self.suspicion_scores.get(acc, 0.0)
+            if score < self.FLAG_THRESHOLD:
                 continue
+                
+            ml_data = self.ml_results.get(acc, {})
             suspicious_accounts.append({
                 "account_id": acc,
                 "suspicion_score": score,
-                "detected_patterns": sorted(self.account_patterns.get(acc, set())),
+                "role": ml_data.get("role", "LEAF"),
+                "decision": ml_data.get("decision", "APPROVE"),
+                "flag_hits": [p for p in sorted(self.account_patterns.get(acc, set())) if str(p).startswith("F") and len(p) <= 3],
+                "ml_scores": ml_data.get("components", {}),
+                "detected_patterns": sorted([p for p in self.account_patterns.get(acc, set()) if not (str(p).startswith("F") and len(p) <= 3)]),
                 "ring_id": account_rings[acc][0] if account_rings[acc] else "NONE",
-                "explanation": self._explanations.get(acc, ""),
             })
 
         suspicious_accounts.sort(key=lambda x: (-x["suspicion_score"], x["account_id"]))
@@ -1603,13 +1506,26 @@ class ForensicsEngine:
         for node in self.G.nodes():
             score = self.suspicion_scores.get(node, 0)
             patterns = sorted(self.account_patterns.get(node, set()))
+            ml_data = getattr(self, "ml_results", {}).get(node, {})
+            role = ml_data.get("role", "LEAF")
+            decision = ml_data.get("decision", "APPROVE")
 
-            if score > 70:
+            # HUB == Purple, BRIDGE == Orange, others based on score
+            if role == "HUB":
+                color, border, size = "#9B59B6", "#8E44AD", 35
+            elif role == "BRIDGE":
+                color, border, size = "#E67E22", "#D35400", 25
+            elif decision == "BLOCK":
                 color, border, size = "#E74C3C", "#C0392B", 30
-            elif score > 30:
-                color, border, size = "#F39C12", "#E67E22", 22
+            elif decision == "REVIEW":
+                color, border, size = "#F1C40F", "#F39C12", 20
             else:
                 color, border, size = "#3498DB", "#2980B9", 16
+
+            in_deg = self.G.in_degree(node)
+            out_deg = self.G.out_degree(node)
+            total_in = round(sum(float(attrs.get("amount", 0)) for _, _, attrs in self.G.in_edges(node, data=True)), 2)
+            total_out = round(sum(float(attrs.get("amount", 0)) for _, _, attrs in self.G.out_edges(node, data=True)), 2)
 
             nodes_list.append({
                 "id": node,
@@ -1617,11 +1533,16 @@ class ForensicsEngine:
                 "color": {"background": color, "border": border,
                           "highlight": {"background": border, "border": "#ECF0F1"}},
                 "size": size,
-                "title": node,
+                "title": f"{node} | {role}",
+                "role": role,
+                "decision": decision,
                 "suspicion_score": score,
                 "detected_patterns": patterns,
-                "explanation": self._explanations.get(node, ""),
                 "ring_ids": [r["ring_id"] for r in self.fraud_rings if node in r["member_accounts"]],
+                "in_degree": in_deg,
+                "out_degree": out_deg,
+                "total_incoming": total_in,
+                "total_outgoing": total_out,
             })
 
         # Deduplicate edges for vis.js (collapse MultiDiGraph parallel edges)
@@ -1647,60 +1568,53 @@ class ForensicsEngine:
     #  ORCHESTRATOR — Recall-Optimized Pipeline                            #
     # ================================================================== #
     def run_all(self) -> dict:
-        self._start_time = time.time()
+        try:
+            self._start_time = time.time()
+            self._detect_business_immunity()
+            self.detect_cycles()
+            self.detect_shells()
+            self.detect_velocity()
+            self._extract_smurf_candidates()
+            self._score_smurf_candidates()
+            self.detect_structuring()
 
-        # ---- Stage 0: Business Immunity (BEFORE all detection) ----
-        self._detect_business_immunity()
+            immune_keep = {"payroll", "merchant"}
+            for acc in self._immune_accounts:
+                self.account_patterns[acc] = self.account_patterns[acc] & immune_keep
 
-        # ---- Stage 1: Candidate Detection (all patterns → _candidate_rings) ----
-        self.detect_cycles()
-        self.detect_shells()
-        self.detect_velocity()
-        self._extract_smurf_candidates()
-        self._score_smurf_candidates()
-        self.detect_structuring()
+            cleaned_candidates = []
+            for cand in self._candidate_rings:
+                clean_members = [m for m in cand["members"]
+                                 if m not in self._immune_accounts]
+                if len(clean_members) >= 3:
+                    cand["members"] = sorted(clean_members)
+                    cleaned_candidates.append(cand)
+            self._candidate_rings = cleaned_candidates
 
-        # ---- Stage 1.5: Immune Account Cleanup ----
-        # Strip fraud patterns from immune accounts (keep only immune type tag)
-        immune_keep = {"payroll", "merchant"}
-        for acc in self._immune_accounts:
-            self.account_patterns[acc] = self.account_patterns[acc] & immune_keep
+            self._consolidate_rings()
+            self._apply_pattern_hierarchy()
+            self.calculate_suspicion_scores()
 
-        # Remove immune accounts from candidate ring membership
-        cleaned_candidates = []
-        for cand in self._candidate_rings:
-            clean_members = [m for m in cand["members"]
-                             if m not in self._immune_accounts]
-            if len(clean_members) >= 3:
-                cand["members"] = sorted(clean_members)
-                cleaned_candidates.append(cand)
-        self._candidate_rings = cleaned_candidates
+            self._processing_time = time.time() - self._start_time
 
-        # ---- Stage 2: Ring Consolidation + Arbitration (§2 + §4) ----
-        self._consolidate_rings()
+            ring_types = defaultdict(int)
+            for r in self.fraud_rings:
+                ring_types[r["pattern_type"]] += 1
+            flagged = sum(1 for s in self.suspicion_scores.values() if s >= self.FLAG_THRESHOLD)
 
-        # ---- Stage 3: Pattern Hierarchy ----
-        self._apply_pattern_hierarchy()
+            print(f"\n{'='*50}")
+            print(f"  MONEYMAL V2.0 — Detection Report")
+            print(f"{'='*50}")
+            print(f"  Rings detected: {len(self.fraud_rings)}")
+            for rtype, cnt in sorted(ring_types.items()):
+                print(f"    - {rtype}: {cnt}")
+            print(f"  Flagged accounts: {flagged}")
+            print(f"  Runtime: {self._processing_time:.2f}s")
+            print(f"{'='*50}\n")
 
-        # ---- Stage 4: Composite Risk Scoring + Suppression ----
-        self.calculate_suspicion_scores()
-
-        self._processing_time = time.time() - self._start_time
-
-        # ---- Summary Print ----
-        ring_types = defaultdict(int)
-        for r in self.fraud_rings:
-            ring_types[r["pattern_type"]] += 1
-        flagged = sum(1 for s in self.suspicion_scores.values() if s > 0)
-
-        print(f"\n{'='*50}")
-        print(f"  HYBRID SENTINEL v6.0 — Detection Report")
-        print(f"{'='*50}")
-        print(f"  Rings detected: {len(self.fraud_rings)}")
-        for rtype, cnt in sorted(ring_types.items()):
-            print(f"    - {rtype}: {cnt}")
-        print(f"  Flagged accounts: {flagged}")
-        print(f"  Runtime: {self._processing_time:.2f}s")
-        print(f"{'='*50}\n")
-
-        return self.generate_json()
+            return self.generate_json()
+        except Exception as e:
+            print(f"CRITICAL ERROR in Engine: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return {"error": str(e), "suspicious_accounts": [], "fraud_rings": [], "summary": {}}

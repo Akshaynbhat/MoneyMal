@@ -35,11 +35,13 @@ export default function Dashboard() {
         const accounts = result.suspicious_accounts || [];
         const rings = result.fraud_rings || [];
         const highRisk = accounts.filter(a => a.suspicion_score > 70).length;
+        const blocks = accounts.filter(a => a.decision === 'BLOCK').length;
+        const reviews = accounts.filter(a => a.decision === 'REVIEW').length;
         const avgScore = accounts.length > 0
             ? (accounts.reduce((sum, a) => sum + a.suspicion_score, 0) / accounts.length).toFixed(1)
             : '0.0';
         const totalRingMembers = rings.reduce((sum, r) => sum + r.member_accounts.length, 0);
-        return { highRisk, avgScore, totalRingMembers, accounts, rings };
+        return { highRisk, blocks, reviews, avgScore, totalRingMembers, accounts, rings };
     }, [result]);
 
     if (!result) {
@@ -59,13 +61,13 @@ export default function Dashboard() {
                     <span style={{ color: 'var(--color-accent)' }}>THREAT</span> DASHBOARD
                 </h1>
                 <p style={{ color: 'var(--color-text-dim)', fontSize: '0.75rem', marginTop: '4px' }}>
-                    Hybrid Sentinel v6.0 — Real-time Financial Crime Intelligence
+                    MoneyMal v2.0 — Graph-Native & ML-Powered Financial Forensics
                 </p>
             </motion.div>
 
             {/* Metric Cards - Bento Grid */}
             <motion.div
-                className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8"
+                className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-8"
                 variants={stagger}
                 initial="hidden"
                 animate="visible"
@@ -76,8 +78,18 @@ export default function Dashboard() {
                 </motion.div>
 
                 <motion.div className="metric-card glass-card-glow" variants={fadeUp}>
-                    <div className="metric-value danger"><AnimatedNumber value={s.suspicious_accounts_flagged} /></div>
-                    <div className="metric-label">Suspicious Accounts</div>
+                    <div className="metric-value text-cyan-400"><AnimatedNumber value={s.suspicious_accounts_flagged} /></div>
+                    <div className="metric-label">Flagged Accounts</div>
+                </motion.div>
+                
+                <motion.div className="metric-card glass-card-glow border-[1px] border-red-500/20 bg-red-500/5" variants={fadeUp}>
+                    <div className="metric-value text-red-500"><AnimatedNumber value={stats.blocks} /></div>
+                    <div className="metric-label">Mandatory BLOCK</div>
+                </motion.div>
+                
+                <motion.div className="metric-card glass-card-glow border-[1px] border-yellow-500/20 bg-yellow-500/5" variants={fadeUp}>
+                    <div className="metric-value text-yellow-500"><AnimatedNumber value={stats.reviews} /></div>
+                    <div className="metric-label">Manual REVIEW</div>
                 </motion.div>
 
                 <motion.div className="metric-card glass-card-glow" variants={fadeUp}>
@@ -111,7 +123,7 @@ export default function Dashboard() {
                         </h2>
                         <span className="badge badge-high">{result.fraud_rings.length} rings</span>
                     </div>
-                    <FraudRingTable rings={result.fraud_rings} />
+                    <FraudRingTable rings={result.fraud_rings} accounts={result.suspicious_accounts} />
                 </motion.div>
 
                 {/* Right Column: Mini Graph + Gauge */}
@@ -172,10 +184,10 @@ export default function Dashboard() {
                         <thead>
                             <tr>
                                 <th>Account ID</th>
+                                <th>Decision</th>
                                 <th>Score</th>
                                 <th>Patterns</th>
                                 <th>Ring</th>
-                                <th>Explanation</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -183,22 +195,27 @@ export default function Dashboard() {
                                 <tr key={a.account_id}>
                                     <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: '0.75rem' }}>{a.account_id}</td>
                                     <td>
+                                        {a.decision === 'BLOCK' ? <span className="px-2 py-1 text-[10px] bg-red-500/20 text-red-400 border border-red-500/30 rounded dark-text">BLOCK</span> : 
+                                         a.decision === 'REVIEW' ? <span className="px-2 py-1 text-[10px] bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 rounded">REVIEW</span> :
+                                         <span className="px-2 py-1 text-[10px] bg-green-500/20 text-green-400 border border-green-500/30 rounded">APPROVE</span>}
+                                    </td>
+                                    <td>
                                         <span className={`badge ${a.suspicion_score > 70 ? 'badge-high' : a.suspicion_score > 30 ? 'badge-medium' : 'badge-low'}`}>
                                             {a.suspicion_score}
                                         </span>
                                     </td>
                                     <td>
                                         <div className="flex flex-wrap gap-1">
-                                            {a.detected_patterns.map((p) => (
+                                            {a.detected_patterns && a.detected_patterns.map((p) => (
                                                 <span key={p} className="pattern-chip">{p}</span>
+                                            ))}
+                                            {a.flag_hits && a.flag_hits.map((p) => (
+                                                <span key={p} className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-purple-500/20 text-purple-400 border border-purple-500/30">{p}</span>
                                             ))}
                                         </div>
                                     </td>
                                     <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--color-accent)' }}>
                                         {a.ring_id || '—'}
-                                    </td>
-                                    <td style={{ fontSize: '0.7rem', color: 'var(--color-text-dim)', maxWidth: '250px' }}>
-                                        {a.explanation || '—'}
                                     </td>
                                 </tr>
                             ))}

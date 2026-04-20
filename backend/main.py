@@ -9,12 +9,16 @@ import json
 import os
 
 import pandas as pd
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.security import OAuth2PasswordRequestForm
 
-from backend.engine import ForensicsEngine
+from engine import ForensicsEngine
+from auth import USERS_DB, verify_password, create_access_token, get_current_user, get_analyst_or_admin, ACCESS_TOKEN_EXPIRE_MINUTES, timedelta
+from fastapi.staticfiles import StaticFiles
+
 
 app = FastAPI(
     title="Hybrid Sentinel API",
@@ -37,11 +41,44 @@ async def health():
     return {"status": "ok", "engine": "Hybrid Sentinel v5"}
 
 
+@app.post("/api/login")
+async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = USERS_DB.get(form_data.username)
+    if not user or not verify_password(form_data.password, user["hashed_password"]):
+        raise HTTPException(status_code=400, detail="Incorrect username or password")
+    
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user["username"], "role": user["role"]},
+        expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer", "role": user["role"]}
+
+@app.get("/api/me")
+async def get_me(current_user: dict = Depends(get_current_user)):
+    return {"username": current_user["username"], "role": current_user["role"]}
+
+
+def run_engine_safe(df: pd.DataFrame) -> dict:
+    try:
+        engine = ForensicsEngine()
+        engine.load_data(df)
+        result = engine.run_all()
+        graph_data = engine.get_graph_data()
+        if "error" in result:
+             return {"error": result["error"]}
+        return {
+            "result": json.loads(json.dumps(result, default=str)),
+            "graph": json.loads(json.dumps(graph_data, default=str)),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.post("/api/analyze")
-async def analyze(file: UploadFile = File(...)):
+async def analyze_private(file: UploadFile = File(...), current_user: dict = Depends(get_analyst_or_admin)):
     """
-    Accept a CSV file upload, run the full forensic analysis,
-    and return the result JSON + graph data.
+    Authenticated access. Returns full ML detail and decisions.
     """
     if not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV files are accepted.")
@@ -49,22 +86,61 @@ async def analyze(file: UploadFile = File(...)):
     try:
         content = await file.read()
         df = pd.read_csv(io.BytesIO(content))
+        # Map common external column names to MoneyMal internal required columns
+        column_mapping = {
+            "sender_account": "sender_id",
+            "receiver_account": "receiver_id",
+            "sender_ac": "sender_id"  # in case it was truncated
+        }
+        df.rename(columns=column_mapping, inplace=True)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to parse CSV: {e}")
 
-    engine = ForensicsEngine()
+    output = run_engine_safe(df)
+    if "error" in output:
+        raise HTTPException(status_code=500, detail=output["error"])
+    return JSONResponse(content=output)
+
+
+@app.post("/api/analyze/public")
+async def analyze_public(file: UploadFile = File(...)):
+    """
+    Guest access. Strips ML details, roles, and flags.
+    """
+    if not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only CSV files are accepted.")
+
     try:
-        engine.load_data(df)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        content = await file.read()
+        df = pd.read_csv(io.BytesIO(content))
+        column_mapping = {
+            "sender_account": "sender_id",
+            "receiver_account": "receiver_id",
+            "sender_ac": "sender_id"
+        }
+        df.rename(columns=column_mapping, inplace=True)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to parse CSV: {e}")
 
-    result = engine.run_all()
-    graph_data = engine.get_graph_data()
+    output = run_engine_safe(df)
+    if "error" in output:
+        raise HTTPException(status_code=500, detail=output["error"])
+        
+    # Strip ML detail
+    if "result" in output:
+        for acc in output["result"].get("suspicious_accounts", []):
+            acc.pop("role", None)
+            acc.pop("decision", None)
+            acc.pop("ml_scores", None)
+            acc.pop("flag_hits", None)
+            
+    if "graph" in output:
+        for node in output["graph"].get("nodes", []):
+            node.pop("role", None)
+            node.pop("decision", None)
+            
+    return JSONResponse(content=output)
 
-    return JSONResponse(content={
-        "result": json.loads(json.dumps(result, default=str)),
-        "graph": json.loads(json.dumps(graph_data, default=str)),
-    })
 
 
 # ---- Serve frontend static build ---- #

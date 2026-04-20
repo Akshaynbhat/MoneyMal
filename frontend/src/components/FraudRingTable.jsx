@@ -1,4 +1,4 @@
-export default function FraudRingTable({ rings }) {
+export default function FraudRingTable({ rings, accounts = [] }) {
     if (!rings || rings.length === 0) {
         return (
             <div style={{ textAlign: 'center', padding: 20, color: 'var(--color-text-dim)', fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>
@@ -6,6 +6,17 @@ export default function FraudRingTable({ rings }) {
             </div>
         );
     }
+
+    const getDecision = (members) => {
+        if (!accounts || accounts.length === 0) return 'REVIEW';
+        const memberDecisions = members.map(m => {
+            const acc = accounts.find(a => a.account_id === m);
+            return acc ? acc.decision || 'APPROVE' : 'APPROVE';
+        });
+        if (memberDecisions.includes('BLOCK')) return 'BLOCK';
+        if (memberDecisions.includes('REVIEW')) return 'REVIEW';
+        return 'APPROVE';
+    };
 
     return (
         <div style={{ maxHeight: 350, overflow: 'auto' }}>
@@ -16,7 +27,7 @@ export default function FraudRingTable({ rings }) {
                         <th>Members</th>
                         <th>Pattern Type</th>
                         <th>Risk Score</th>
-                        <th>Status</th>
+                        <th>Recommendation</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -50,9 +61,9 @@ export default function FraudRingTable({ rings }) {
                                 </div>
                             </td>
                             <td>
-                                <span className={`badge ${ring.risk_score > 80 ? 'badge-high' : ring.risk_score > 50 ? 'badge-medium' : 'badge-low'}`}>
-                                    {ring.risk_score > 80 ? 'Critical' : ring.risk_score > 50 ? 'Warning' : 'Low'}
-                                </span>
+                                {getDecision(ring.member_accounts) === 'BLOCK' ? <span className="px-2 py-1 text-[10px] bg-red-500/20 text-red-400 border border-red-500/30 rounded dark-text">BLOCK</span> : 
+                                 getDecision(ring.member_accounts) === 'REVIEW' ? <span className="px-2 py-1 text-[10px] bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 rounded">REVIEW</span> :
+                                 <span className="px-2 py-1 text-[10px] bg-green-500/20 text-green-400 border border-green-500/30 rounded">APPROVE</span>}
                             </td>
                         </tr>
                     ))}
