@@ -1,4 +1,4 @@
-# 🛡️ MoneyMal — Financial Forensics Engine
+# 🛡️ MoneyMal — A Financial Forensics Engine
 
 > Graph-based money muling detection engine / Financial Crime Detection 
 
