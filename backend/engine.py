@@ -140,9 +140,9 @@ class ForensicsEngine:
 
     MAX_RING_SIZE = 30      # Union-Find cap: prevents mega-rings
     MAX_SCC_SIZE = 200      # Skip SCCs larger than this for cycle search
-    MAX_CYCLES = 2000       # Global cycle cap
-    MAX_DEPTH = 5           # Max cycle length
-    MAX_OPS_PER_NODE = 5000 # Per-node DFS budget
+    MAX_CYCLES = 800        # Global cycle cap (reduced for speed)
+    MAX_DEPTH = 4           # Max cycle length (reduced: 5-cycles rare, very slow)
+    MAX_OPS_PER_NODE = 1500 # Per-node DFS budget (reduced for speed)
     MAX_SHELL_RINGS = 50    # Cap on shell network rings
     MAX_SMURF_RING_SIZE = 15  # Max members per smurfing ring
 
@@ -823,7 +823,8 @@ class ForensicsEngine:
                 if not ts_list:
                     continue
 
-                activity_span = (max(ts_list) - min(ts_list)).total_seconds()
+                _ts_span = max(ts_list) - min(ts_list)
+                activity_span = float(_ts_span / np.timedelta64(1, 's'))
                 if activity_span < 0.70 * dataset_span:
                     continue
 
@@ -1158,10 +1159,8 @@ class ForensicsEngine:
     # ================================================================== #
     def detect_structuring(self) -> None:
         """
-        Strict structuring detection:
-          - ≥5 transactions in near-threshold band ($8K–$9,999 or $4K–$4,999)
-          - Within a 48h window
-          - Pattern repeated across ≥2 separate windows (≥48h apart)
+        Strict structuring detection — fully vectorized (v2).
+        Pre-filters to band transactions once, then uses groupby per account.
         """
         if self.df is None or self.df.empty:
             return
@@ -1169,36 +1168,40 @@ class ForensicsEngine:
         BANDS = [(8000, 9999), (4000, 4999)]
         MIN_HITS_PER_WINDOW = 5
         MIN_WINDOWS = 2
-        WINDOW_48H = timedelta(hours=48)
+        WINDOW_48H_NS = int(48 * 3600 * 1e9)
 
-        for acc in set(self.df["sender_id"]).union(set(self.df["receiver_id"])):
-            mask = (self.df["sender_id"] == acc) | (self.df["receiver_id"] == acc)
-            acc_txns = self.df.loc[mask, ["amount", "timestamp"]].sort_values("timestamp")
+        # Step 1: Filter to band transactions once across entire df
+        band_mask = pd.Series(False, index=self.df.index)
+        for lo, hi in BANDS:
+            band_mask |= ((self.df["amount"] >= lo) & (self.df["amount"] <= hi))
 
-            # Filter to band transactions — vectorized
-            band_mask = pd.Series(False, index=acc_txns.index)
-            for lo, hi in BANDS:
-                band_mask |= ((acc_txns["amount"] >= lo) & (acc_txns["amount"] <= hi))
-            band_txns = list(acc_txns.loc[band_mask, "timestamp"])
+        band_df = self.df.loc[band_mask, ["sender_id", "receiver_id", "timestamp"]].copy()
+        if band_df.empty:
+            return
 
-            if len(band_txns) < MIN_HITS_PER_WINDOW:
+        # Step 2: Build per-account band-transaction lists via melt/concat
+        s_band = band_df[["sender_id", "timestamp"]].rename(columns={"sender_id": "account"})
+        r_band = band_df[["receiver_id", "timestamp"]].rename(columns={"receiver_id": "account"})
+        acc_band = pd.concat([s_band, r_band], ignore_index=True)
+        acc_band.sort_values(["account", "timestamp"], inplace=True)
+
+        # Step 3: Per-account two-pointer window scan
+        for acc, grp in acc_band.groupby("account"):
+            band_ts = grp["timestamp"].values.astype(np.int64)
+            n = len(band_ts)
+            if n < MIN_HITS_PER_WINDOW:
                 continue
 
-            # Find qualifying 48h windows
-            qualifying_windows: list[pd.Timestamp] = []
-            n = len(band_txns)
+            qualifying_windows = []
             right = 0
             for left in range(n):
-                w_start = band_txns[left]
-                w_end = w_start + WINDOW_48H
-                while right < n and band_txns[right] <= w_end:
+                while right < n and band_ts[right] - band_ts[left] <= WINDOW_48H_NS:
                     right += 1
                 window_count = right - left
                 if window_count >= MIN_HITS_PER_WINDOW:
-                    # Check this window is ≥48h from previous qualifying window
                     if (not qualifying_windows or
-                            (w_start - qualifying_windows[-1]).total_seconds() >= 48 * 3600):
-                        qualifying_windows.append(w_start)
+                            band_ts[left] - qualifying_windows[-1] >= WINDOW_48H_NS):
+                        qualifying_windows.append(band_ts[left])
 
             if len(qualifying_windows) >= MIN_WINDOWS:
                 self.account_patterns[acc].add("structuring")
