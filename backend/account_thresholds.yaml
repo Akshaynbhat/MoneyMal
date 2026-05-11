@@ -1,0 +1,55 @@
+# ============================================================
+# MoneyMal — Account-Type Fraud Thresholds Configuration
+# ============================================================
+# Edit this file to change thresholds WITHOUT touching code.
+# All monetary values are in Indian Rupees (₹).
+#
+# velocity_window_minutes: sliding window for tx count check
+# velocity_tx_limit:       max transactions allowed in that window
+# high_value_threshold:    single transaction alert above this amount
+# daily_limit:             cumulative 24h spend/receive alert above this
+#
+# CREDIT_CARD has extra fields:
+#   credit_limit_pct:      flag if single tx > this % of credit_limit
+#   credit_limit_default:  assumed credit limit if not in data (₹)
+#   velocity_window_minutes: 5 min window for card testing check
+# ============================================================
+
+SAVINGS:
+  high_value_threshold: 50000          # ₹50,000 per transaction
+  velocity_window_minutes: 10
+  velocity_tx_limit: 5                 # >5 transactions in 10 min
+  daily_limit: 100000                  # ₹1,00,000 in 24 hours
+
+GENERAL:
+  high_value_threshold: 200000         # ₹2,00,000 per transaction
+  velocity_window_minutes: 10
+  velocity_tx_limit: 10               # >10 transactions in 10 min
+  daily_limit: 500000                  # ₹5,00,000 in 24 hours
+
+CURRENT:                               # Alias for GENERAL
+  high_value_threshold: 200000
+  velocity_window_minutes: 10
+  velocity_tx_limit: 10
+  daily_limit: 500000
+
+PREMIUM:
+  high_value_threshold: 1000000        # ₹10,00,000 per transaction
+  velocity_window_minutes: 10
+  velocity_tx_limit: 15               # >15 transactions in 10 min
+  daily_limit: 2500000                 # ₹25,00,000 in 24 hours
+
+BUSINESS:
+  high_value_threshold: 5000000        # ₹50,00,000 per transaction
+  velocity_window_minutes: 10
+  velocity_tx_limit: 30               # >30 transactions in 10 min
+  daily_limit: 20000000                # ₹2,00,00,000 in 24 hours
+
+CREDIT_CARD:
+  credit_limit_pct: 0.80              # flag if single tx > 80% of credit limit
+  credit_limit_default: 100000         # assumed ₹1,00,000 if not in data
+  velocity_window_minutes: 5          # 5 min window (card testing)
+  velocity_tx_limit: 8               # >8 transactions in 5 min
+
+# Default fallback (used when account_type column is absent or unknown)
+DEFAULT: GENERAL
