@@ -296,7 +296,6 @@ Tested on a standard laptop (no GPU):
 
 ## Team Members
 
-Bhuvan Bapat,
 Manas Prashant,
 Akshay N Bhat,
 Amogh Basavaraj
