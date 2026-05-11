@@ -187,7 +187,6 @@ npm run dev
 
 ## Team Members
 
-Bhuvan Bapat,
 Manas Prashant,
 Akshay N Bhat,
 Amogh Basavaraj
