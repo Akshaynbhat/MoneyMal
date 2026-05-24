@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+pandas
+networkx
+numpy
+scikit-learn
+python-multipart
+sqlalchemy
+psycopg2-binary
+asyncpg
+redis
