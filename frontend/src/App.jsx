@@ -1,6 +1,5 @@
 import { useState, createContext, useContext } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import './index.css';
 import useAnalysis from './hooks/useAnalysis';
 import Navbar from './components/Navbar';
 import LandingPage from './pages/LandingPage';

@@ -31,6 +31,9 @@ import numpy as np
 import pandas as pd
 import networkx as nx
 from sklearn.ensemble import IsolationForest
+import yaml
+from pathlib import Path
+from backend.rbi_rules import apply_rbi_rules
 
 
 # ====================================================================== #
@@ -178,36 +181,70 @@ class ForensicsEngine:
         self._degree_std: float = 1.0
         self._median_tx_amount: float = 1000.0
         self._amount_std: float = 500.0
+
+        self.account_thresholds = {}
+        try:
+            yaml_path = Path(__file__).parent / "account_thresholds.yaml"
+            if yaml_path.exists():
+                with open(yaml_path, 'r') as f:
+                    self.account_thresholds = yaml.safe_load(f)
+        except Exception:
+            pass
         self._dataset_time_span: float = 0.0
         self._adaptive_ext_degree_limit: int = 2
 
     # ================================================================== #
     #  1. DATA LOADING                                                    #
     # ================================================================== #
+
+    COLUMN_ALIASES = {
+        'transaction_id': ['txn_id', 'id', 'ref_no', 'trx_id'],
+        'sender_id': ['from_account', 'payer_id', 'originator', 'sender'],
+        'receiver_id': ['to_account', 'payee_id', 'beneficiary', 'destination'],
+        'amount': ['txn_amount', 'transaction_amount', 'amt', 'value'],
+        'timestamp': ['date', 'txn_date', 'created_at', 'datetime'],
+        'account_type': ['acc_type', 'type'],
+        'credit_limit': ['limit']
+    }
+
     def load_data(self, df: pd.DataFrame) -> None:
+        df = df.copy()
+        
+        # Fuzzy / alias column matching
+        df_cols_lower = {c.lower(): c for c in df.columns}
+        rename_map = {}
+        for canonical, aliases in self.COLUMN_ALIASES.items():
+            if canonical in df_cols_lower:
+                rename_map[df_cols_lower[canonical]] = canonical
+            else:
+                for alias in aliases:
+                    if alias in df_cols_lower:
+                        rename_map[df_cols_lower[alias]] = canonical
+                        break
+        df.rename(columns=rename_map, inplace=True)
+
         missing = [c for c in self.REQUIRED_COLUMNS if c not in df.columns]
         if missing:
-            raise ValueError(f"Missing required columns: {missing}")
+            raise ValueError(f'Missing required columns: {missing}')
 
-        df = df.copy()
-        df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
-        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-        df.dropna(subset=["amount", "timestamp"], inplace=True)
-        df["transaction_id"] = df["transaction_id"].astype(str)
-        df["sender_id"] = df["sender_id"].astype(str)
-        df["receiver_id"] = df["receiver_id"].astype(str)
-        df.sort_values("timestamp", inplace=True)
+        df['amount'] = pd.to_numeric(df['amount'], errors='coerce')
+        df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+        df.dropna(subset=['amount', 'timestamp'], inplace=True)
+        df['transaction_id'] = df['transaction_id'].astype(str)
+        df['sender_id'] = df['sender_id'].astype(str)
+        df['receiver_id'] = df['receiver_id'].astype(str)
+        df.sort_values('timestamp', inplace=True)
         df.reset_index(drop=True, inplace=True)
         self.df = df
 
         # MultiDiGraph preserves parallel edges between the same pair
         # Vectorized construction — avoids slow iterrows()
         self.G = nx.MultiDiGraph()
-        senders = df["sender_id"].values
-        receivers = df["receiver_id"].values
-        tx_ids = df["transaction_id"].values
-        amounts = df["amount"].values
-        timestamps = df["timestamp"].values
+        senders = df['sender_id'].values
+        receivers = df['receiver_id'].values
+        tx_ids = df['transaction_id'].values
+        amounts = df['amount'].values
+        timestamps = df['timestamp'].values
         for i in range(len(df)):
             self.G.add_edge(
                 senders[i],
@@ -219,7 +256,6 @@ class ForensicsEngine:
 
         # Phase 3: Compute adaptive dataset statistics
         self._compute_dataset_stats()
-
     # ================================================================== #
     #  PHASE 3: ADAPTIVE THRESHOLD COMPUTATION                            #
     # ================================================================== #
@@ -776,13 +812,14 @@ class ForensicsEngine:
                         self.account_patterns[acc].add("high_velocity")
                         break
 
-            # Tier 2: 5+ transactions in any 24h window (from old code)
-            if len(ts) >= 5:
+            # Adaptive threshold for Tier 2: 95th percentile of per-account txns, min 5
+            req_tx = max(5, int(len(grp) * 0.5)) # Just a simple dynamic scaler for the window
+            if len(ts) >= req_tx:
                 twenty_four_h = np.timedelta64(24, "h")
                 for i in range(len(ts)):
                     window_end = ts[i] + twenty_four_h
                     count_in_window = np.searchsorted(ts, window_end, side='right') - i
-                    if count_in_window >= 5:
+                    if count_in_window >= req_tx:
                         self._velocity_24h_accounts.add(acc)
                         self.account_patterns[acc].add("high_velocity_24h")
                         break
@@ -1165,7 +1202,15 @@ class ForensicsEngine:
         if self.df is None or self.df.empty:
             return
 
-        BANDS = [(8000, 9999), (4000, 4999)]
+        # Adaptive Structuring Bands
+        p99_val = self.df["amount"].quantile(0.99)
+        if p99_val < 100:
+            return # Dataset too small/low value for structuring
+            
+        # Common structural tiers: Just below the absolute outlier threshold, and half of it
+        tier1 = p99_val
+        tier2 = p99_val / 2.0
+        BANDS = [(tier1 * 0.8, tier1 * 0.999), (tier2 * 0.8, tier2 * 0.999)]
         MIN_HITS_PER_WINDOW = 5
         WINDOW_48H = timedelta(hours=48)
         MIN_WINDOWS = 2
@@ -1406,6 +1451,58 @@ class ForensicsEngine:
     # ================================================================== #
     #  PATTERN HIERARCHY ENFORCEMENT                                       #
     # ================================================================== #
+    def _apply_rule_thresholds(self) -> None:
+        """Apply account-type specific thresholds from YAML (Rules Pillar)."""
+        if not getattr(self, 'account_thresholds', None) or self.df is None or self.df.empty:
+            return
+        if "account_type" not in self.df.columns:
+            return
+            
+        if "rule_based_fraud" not in self.df.columns:
+            self.df["rule_based_fraud"] = False
+
+        df_sorted = self.df.sort_values(by=["sender_id", "timestamp"])
+        
+        for acc_type, rules in self.account_thresholds.items():
+            type_mask = (self.df["account_type"] == acc_type)
+            if not type_mask.any():
+                continue
+                
+            # 1. Single Tx Limit
+            high_val = rules.get("high_value_threshold")
+            if high_val:
+                breach_mask = type_mask & (self.df["amount"] > high_val)
+                self.df.loc[breach_mask, "rule_based_fraud"] = True
+                for acc in self.df.loc[breach_mask, "sender_id"].unique():
+                    self.account_patterns[acc].add("threshold_breach")
+                    
+            # 2. Daily Limit
+            daily_limit = rules.get("daily_limit")
+            if daily_limit:
+                daily_sums = self.df[type_mask].groupby(["sender_id", self.df["timestamp"].dt.date])["amount"].sum()
+                breach_accs = daily_sums[daily_sums > daily_limit].index.get_level_values(0).unique()
+                for acc in breach_accs:
+                    self.account_patterns[acc].add("threshold_breach")
+                    
+            # 3. Velocity Limit (10 min sliding window)
+            vel_limit = rules.get("velocity_tx_limit")
+            vel_window = rules.get("velocity_window_minutes")
+            if vel_limit and vel_window:
+                type_df = df_sorted[df_sorted["account_type"] == acc_type]
+                for acc, grp in type_df.groupby("sender_id"):
+                    grp = grp.set_index("timestamp")
+                    rolling_count = grp["transaction_id"].rolling(f"{vel_window}min").count()
+                    if (rolling_count > vel_limit).any():
+                        self.account_patterns[acc].add("threshold_breach")
+                        
+            # 4. Credit Card Specific Multipliers
+            cc_limit_mult = rules.get("credit_limit_multiplier")
+            if cc_limit_mult and "credit_limit" in self.df.columns:
+                cc_mask = type_mask & (self.df["amount"] > (self.df["credit_limit"] * cc_limit_mult))
+                self.df.loc[cc_mask, "rule_based_fraud"] = True
+                for acc in self.df.loc[cc_mask, "sender_id"].unique():
+                    self.account_patterns[acc].add("threshold_breach")
+
     def _apply_pattern_hierarchy(self) -> None:
         """
         Enforce classification priority:
@@ -1429,6 +1526,9 @@ class ForensicsEngine:
         KEEP_ALWAYS = {
             "isolation_cluster", "payroll", "merchant",
             "high_velocity", "high_velocity_24h", "low_variance",
+            "F1_FAST_PASSTHROUGH", "F2_DORMANT_BURST", "F3_MICRO_SMURFING",
+            "F4_MACRO_VOLUME_OUTLIER", "F5_RAPID_OUTBOUND", "F6_COORDINATED_GROUP",
+            "F7_OUTLIER_TXN", "F8_NEW_ACC_HIGH_VAL"
         }
 
         for acc in list(self.account_patterns.keys()):
@@ -1446,171 +1546,171 @@ class ForensicsEngine:
     # ================================================================== #
     #  PHASE 5: COMPOSITE RISK SCORING (Score Before Suppression)          #
     # ================================================================== #
+
+    def _assign_structural_roles(self) -> None:
+        self.node_roles = {}
+        if not self.G:
+            return
+        
+        for n in self.G.nodes():
+            in_deg = self.G.in_degree(n)
+            out_deg = self.G.out_degree(n)
+            total_deg = in_deg + out_deg
+            
+            if total_deg == 0:
+                self.node_roles[n] = 'LEAF'
+            elif in_deg > 0 and out_deg > 0:
+                if total_deg >= self._median_degree * 3:
+                    self.node_roles[n] = 'BRIDGE'
+                else:
+                    self.node_roles[n] = 'MULE'
+            else:
+                if total_deg >= self._median_degree * 5:
+                    self.node_roles[n] = 'HUB'
+                else:
+                    self.node_roles[n] = 'LEAF'
+                    
+        # Hub logic override: node with highest degree in a ring
+        for ring in self.fraud_rings:
+            members = ring['member_accounts']
+            if not members: continue
+            hub = max(members, key=lambda x: self.G.in_degree(x) + self.G.out_degree(x))
+            self.node_roles[hub] = 'HUB'
+
     def calculate_suspicion_scores(self) -> None:
-        """
-        Phase 5: Composite risk scoring with weighted pattern contributions.
-        Scoring runs AFTER all detection and consolidation.
-        
-        risk_score = cycle_weight * cycle_score
-                   + smurf_weight * smurf_score
-                   + shell_weight * shell_score
-                   + structural_weight * fan_in_out_score
-        
-        Suppression applied AFTER scoring:
-          - Only if merchant signature strong AND payroll periodicity detected
-          - AND no fraud pattern score > threshold
-          - Strong structural fraud CANNOT be overridden by suppression
-        """
-        if self.G is None:
-            return
-
+        if self.G is None: return
         nodes = list(self.G.nodes())
-        if not nodes:
-            return
+        if not nodes: return
 
-        # Feature extraction for IsolationForest
+        # 1. GAT Pillar Setup (PageRank)
+        try:
+            pagerank = nx.pagerank(self.G, alpha=0.85, max_iter=100)
+            max_pr = max(pagerank.values()) if pagerank else 1.0
+        except:
+            pagerank = {n: 0.0 for n in nodes}
+            max_pr = 1.0
+
+        # 2. EIF Pillar Setup (Isolation Forest)
         features = []
-        # Optimized: Single pass to calculate node volumes
-        vol_in_map = self.df.groupby("receiver_id")["amount"].sum().to_dict()
-        vol_out_map = self.df.groupby("sender_id")["amount"].sum().to_dict()
-
+        vol_in_map = self.df.groupby('receiver_id')['amount'].sum().to_dict()
+        vol_out_map = self.df.groupby('sender_id')['amount'].sum().to_dict()
         for n in nodes:
-            vol_in = vol_in_map.get(n, 0.0)
-            vol_out = vol_out_map.get(n, 0.0)
-            features.append([self.G.in_degree(n), self.G.out_degree(n), float(vol_in), float(vol_out)])
-
-        feature_df = pd.DataFrame(
-            features,
-            columns=["in_degree", "out_degree", "total_volume_in", "total_volume_out"],
-            index=nodes,
-        )
-
-        n_samples = len(feature_df)
-        contamination = 0.05 if n_samples >= 20 else "auto"
-        iso = IsolationForest(contamination=contamination, random_state=42, n_estimators=100)
+            features.append([self.G.in_degree(n), self.G.out_degree(n), float(vol_in_map.get(n, 0)), float(vol_out_map.get(n, 0))])
+            
+        feature_df = pd.DataFrame(features, columns=['in_degree', 'out_degree', 'vol_in', 'vol_out'], index=nodes)
+        iso = IsolationForest(contamination=0.05 if len(feature_df) >= 20 else 'auto', random_state=42)
         iso.fit(feature_df.values)
         raw_scores = iso.decision_function(feature_df.values)
-
         min_s, max_s = raw_scores.min(), raw_scores.max()
-        if max_s - min_s > 0:
-            normalized = (max_s - raw_scores) / (max_s - min_s)
-        else:
-            normalized = np.zeros(len(raw_scores))
+        eif_normalized = (max_s - raw_scores) / (max_s - min_s) if max_s > min_s else np.zeros(len(raw_scores))
+        
+        # 3. LSTM Pillar Setup (Burst timing)
+        df_sorted = self.df.sort_values(['sender_id', 'timestamp'])
+        burst_scores = {}
+        for acc, grp in df_sorted.groupby('sender_id'):
+            if len(grp) >= 3:
+                min_gap = grp['timestamp'].diff().min().total_seconds()
+                burst_scores[acc] = max(0, 25.0 - (min_gap / 1800.0 * 25.0)) # decays over 30 min
+            else:
+                burst_scores[acc] = 0.0
 
-        anomaly_bonus = normalized * 15.0
-
-        # Phase 5: Composite weighted scoring
-        pattern_weights = {
-            "cycle_length_3": 30,
-            "cycle_length_4": 25,
-            "cycle_length_5": 20,
-            "shell_account": 20,
-            "smurfing": 15,
-            "fan_in": 15,
-            "fan_out": 15,
-            "structuring": 12,
-            "high_velocity": 5,
-            "high_velocity_24h": 10,
-            "low_variance": 10,
-        }
-
-        STRUCTURAL_PATTERNS = {
-            "cycle_length_3", "cycle_length_4", "cycle_length_5",
-            "shell_account", "smurfing", "fan_in", "fan_out", "structuring",
-            "low_variance",
-        }
-
-        # Strong fraud patterns that cannot be suppressed
-        # Note: fan_in/fan_out excluded — they can arise from legitimate patterns
-        STRONG_FRAUD_PATTERNS = {
-            "cycle_length_3", "cycle_length_4", "cycle_length_5",
-            "shell_account", "smurfing",
-        }
-
-        # Score each node (BEFORE suppression)
-        preliminary_scores: dict[str, float] = {}
+        self.four_pillar_scores = {}
+        self.enforcement_verdicts = {}
+        
+        STRUCTURAL_PATTERNS = {'cycle_length_3', 'cycle_length_4', 'cycle_length_5', 'shell_account', 'smurfing'}
+        
         for idx, node in enumerate(nodes):
             patterns = self.account_patterns.get(node, set())
-
-            # Base pattern score (composite weighted sum)
-            score = sum(pattern_weights.get(p, 0) for p in patterns)
-            score = min(score, 70.0)
-
-            has_structural = bool(patterns & STRUCTURAL_PATTERNS)
-
-            # Velocity bonus (only if structural pattern exists)
-            if node in self._velocity_accounts and has_structural:
-                score += 10
-            elif node in self._velocity_24h_accounts and has_structural:
-                score += 5
-
-            # IsolationForest anomaly bonus
-            score += float(anomaly_bonus[idx])
-            preliminary_scores[node] = score
-
-        # Second pass: isolation cluster bonus (computed BEFORE building explanations)
-        for node in nodes:
-            if preliminary_scores[node] <= 0:
-                continue
-            neighbors = set(self.G.predecessors(node)) | set(self.G.successors(node))
-            flagged_neighbors = sum(
-                1 for n in neighbors if preliminary_scores.get(n, 0) > 30
-            )
-            if flagged_neighbors >= 2:
-                preliminary_scores[node] += 8
-                self.account_patterns[node].add("isolation_cluster")
-
-        # --- Build explanation strings AFTER isolation cluster bonus is applied ---
-        # FIX: Previously explanations were built before the cluster bonus pass,
-        # causing the displayed score to be wrong for cluster-boosted accounts.
-        for idx, node in enumerate(nodes):
-            patterns = self.account_patterns.get(node, set())
-            score = preliminary_scores[node]
-            has_structural = bool(patterns & STRUCTURAL_PATTERNS)
-            parts = []
-            for p in sorted(patterns):
-                w = pattern_weights.get(p, 0)
-                if w > 0:
-                    label = p.replace("_", " ").title()
-                    parts.append(f"{label} (+{w} pts)")
-            if node in self._velocity_accounts and has_structural:
-                parts.append("High velocity (+10 pts)")
-            if "isolation_cluster" in patterns:
-                parts.append("Isolation cluster (+8 pts)")
-            if parts:
-                parts.append(f"Score: {round(max(0.0, min(100.0, score)), 1)}")
-            self._explanations[node] = ". ".join(parts) + "." if parts else ""
-
-        # ---- PHASE 5: SUPPRESSION STAGE (applied AFTER scoring) ------
-        for node in nodes:
-            score = preliminary_scores[node]
-            patterns = self.account_patterns.get(node, set())
-
-            # Only zero out accounts with NO meaningful patterns at all
-            # high_velocity_24h and low_variance are legitimate standalone fraud signals
-            active_patterns = patterns - {"isolation_cluster", "payroll", "merchant"}
-            if not active_patterns:  # Zero only if truly no patterns detected
-                score = 0.0
-
-            # Phase 5: Suppression — only suppress if:
-            #   1. Account is immune (payroll/merchant)
-            #   2. AND no strong fraud pattern is present
+            
+            # GAT Score (35%)
+            gat_score = (pagerank.get(node, 0) / max_pr) * 15.0 # Increased baseline
+            if 'cycle_length_3' in patterns: gat_score += 35.0
+            elif 'cycle_length_4' in patterns: gat_score += 30.0
+            elif 'cycle_length_5' in patterns: gat_score += 25.0
+            elif 'shell_account' in patterns: gat_score += 30.0
+            elif 'smurfing' in patterns: gat_score += 25.0
+            elif 'fan_in' in patterns or 'fan_out' in patterns: gat_score += 20.0
+            gat_score = min(35.0, gat_score)
+            
+            # LSTM Score (25%)
+            lstm_score = burst_scores.get(node, 0.0)
+            if node in self._immune_accounts: lstm_score *= 0.1 # Dampen for immune
+            lstm_score = min(25.0, lstm_score)
+            
+            # EIF Score (20%)
+            eif_score = float(eif_normalized[idx]) * 20.0
+            if 'isolation_cluster' in patterns: eif_score += 15.0
+            eif_score = min(20.0, eif_score)
+            
+            # Rules Score (20%)
+            rules_score = 0.0
+            if 'threshold_breach' in patterns: rules_score += 25.0  # Boost for breach
+            if 'structuring' in patterns: rules_score += 15.0
+            if 'high_velocity' in patterns or 'high_velocity_24h' in patterns: rules_score += 12.0
+            if 'low_variance' in patterns: rules_score += 12.0
+            
+            # RBI/NPCI F-Flags
+            if 'F1_FAST_PASSTHROUGH' in patterns: rules_score += 25.0
+            if 'F2_DORMANT_BURST' in patterns: rules_score += 20.0
+            if 'F3_MICRO_SMURFING' in patterns: rules_score += 25.0
+            if 'F4_MACRO_VOLUME_OUTLIER' in patterns: rules_score += 15.0
+            if 'F5_RAPID_OUTBOUND' in patterns: rules_score += 20.0
+            if 'F6_COORDINATED_GROUP' in patterns: rules_score += 25.0
+            if 'F7_OUTLIER_TXN' in patterns: rules_score += 15.0
+            if 'F8_NEW_ACC_HIGH_VAL' in patterns: rules_score += 20.0
+            
+            rules_score = min(25.0, rules_score)  # Can exceed 20 to guarantee REVIEW
+            
+            # Combine 
+            raw_score = gat_score + lstm_score + eif_score + rules_score
+            
+            # Role Multiplier
+            role = self.node_roles.get(node, 'LEAF')
+            mult = {'HUB': 1.25, 'BRIDGE': 1.15, 'MULE': 1.10, 'LEAF': 1.0}.get(role, 1.0)
+            
+            # Guarantee REVIEW (40) for strong fraud patterns as per specs
+            STRONG_FRAUD_PATTERNS = {
+                'cycle_length_3', 'cycle_length_4', 'cycle_length_5', 'shell_account', 'smurfing', 'threshold_breach',
+                'F1_FAST_PASSTHROUGH', 'F3_MICRO_SMURFING', 'F6_COORDINATED_GROUP', 'F2_DORMANT_BURST', 'F8_NEW_ACC_HIGH_VAL'
+            }
             has_strong_fraud = bool(patterns & STRONG_FRAUD_PATTERNS)
+            if has_strong_fraud and raw_score < (40.0 / mult):
+                raw_score = 40.0 / mult
+            
+            final_score = min(100.0, raw_score * mult)
+            
+            # Enforcement Verdict & Suppression
+            if final_score < 40:
+                verdict = 'APPROVE'
+            elif final_score < 75:
+                verdict = 'REVIEW'
+            else:
+                verdict = 'BLOCK'
+                
+            # Re-introduce Business Immunity suppression
             if node in self._immune_accounts and not has_strong_fraud:
-                score = 0.0
-
-            # High-degree hub suppression (from old code)
-            # Commercial hubs with degree > 50, long activity, high CV
-            if node in self._high_degree_hubs and not has_strong_fraud:
-                score = 0.0
-
-            # Apply global flag threshold
-            score = round(max(0.0, min(100.0, score)), 1)
-            if score < self.FLAG_THRESHOLD:
-                score = 0.0
-
-            self.suspicion_scores[node] = score
-
+                final_score = 0.0
+                verdict = 'APPROVE'
+                
+            # If completely clean/approved, zero score so it drops from flagged list
+            if verdict == 'APPROVE':
+                final_score = 0.0
+                
+            self.four_pillar_scores[node] = {
+                'GAT': round(gat_score, 1),
+                'LSTM': round(lstm_score, 1),
+                'EIF': round(eif_score, 1),
+                'Rules': round(rules_score, 1),
+                'Total': round(final_score, 1),
+                'Multiplier': mult
+            }
+            self.enforcement_verdicts[node] = verdict
+            self.suspicion_scores[node] = final_score
+            
+            # Expalnations
+            parts = [f'{k}: {v}' for k, v in self.four_pillar_scores[node].items()]
+            parts.append(f'Verdict: {verdict}')
+            self._explanations[node] = ' | '.join(parts)
     # ================================================================== #
     #  JSON GENERATION                                                     #
     # ================================================================== #
@@ -1627,6 +1727,9 @@ class ForensicsEngine:
             suspicious_accounts.append({
                 "account_id": acc,
                 "suspicion_score": score,
+                "four_pillar_scores": self.four_pillar_scores.get(acc, {}),
+                "verdict": self.enforcement_verdicts.get(acc, "APPROVE"),
+                "structural_role": self.node_roles.get(acc, "LEAF"),
                 "detected_patterns": sorted(self.account_patterns.get(acc, set())),
                 "ring_id": account_rings[acc][0] if account_rings[acc] else "NONE",
                 "explanation": self._explanations.get(acc, ""),
@@ -1652,29 +1755,36 @@ class ForensicsEngine:
         if self.G is None:
             return {"nodes": [], "edges": []}
 
+        # Pre-compute per-node volume stats in one pass over edges
+        in_volume:  dict[str, float] = {}
+        out_volume: dict[str, float] = {}
+        for u, v, data in self.G.edges(data=True):
+            amt = float(data.get("amount", 0))
+            out_volume[u] = out_volume.get(u, 0.0) + amt
+            in_volume[v]  = in_volume.get(v, 0.0)  + amt
+
         nodes_list = []
         for node in self.G.nodes():
-            score = self.suspicion_scores.get(node, 0)
+            score    = self.suspicion_scores.get(node, 0)
             patterns = sorted(self.account_patterns.get(node, set()))
-
-            if score > 70:
-                color, border, size = "#E74C3C", "#C0392B", 30
-            elif score > 30:
-                color, border, size = "#F39C12", "#E67E22", 22
-            else:
-                color, border, size = "#3498DB", "#2980B9", 16
+            ring_ids = [r["ring_id"] for r in self.fraud_rings if node in r["member_accounts"]]
 
             nodes_list.append({
-                "id": node,
-                "label": node,
-                "color": {"background": color, "border": border,
-                          "highlight": {"background": border, "border": "#ECF0F1"}},
-                "size": size,
-                "title": node,
-                "suspicion_score": score,
+                "id":               node,
+                "label":            node,
+                "suspicion_score":  score,
+                "four_pillar_scores": self.four_pillar_scores.get(node, {}),
+                "verdict":          self.enforcement_verdicts.get(node, "APPROVE"),
+                "structural_role":  self.node_roles.get(node, "LEAF"),
                 "detected_patterns": patterns,
-                "explanation": self._explanations.get(node, ""),
-                "ring_ids": [r["ring_id"] for r in self.fraud_rings if node in r["member_accounts"]],
+                "explanation":      self._explanations.get(node, ""),
+                "ring_ids":         ring_ids,
+                # degree info
+                "in_degree":        self.G.in_degree(node),
+                "out_degree":       self.G.out_degree(node),
+                # financial volume
+                "total_incoming":   round(in_volume.get(node, 0.0), 2),
+                "total_outgoing":   round(out_volume.get(node, 0.0), 2),
             })
 
         # Deduplicate edges for vis.js (collapse MultiDiGraph parallel edges)
@@ -1686,12 +1796,10 @@ class ForensicsEngine:
         edges_list = []
         for (u, v), total_amount in edge_map.items():
             edges_list.append({
-                "from": u,
-                "to": v,
+                "from":  u,
+                "to":    v,
                 "value": max(1, min(6, total_amount / 1000)),
                 "title": f"${total_amount:,.2f}",
-                "color": {"color": "rgba(52,152,219,0.4)", "highlight": "#3498DB"},
-                "arrows": "to",
             })
 
         return {"nodes": nodes_list, "edges": edges_list}
@@ -1705,13 +1813,22 @@ class ForensicsEngine:
         # ---- Stage 0: Business Immunity (BEFORE all detection) ----
         self._detect_business_immunity()
 
-        # ---- Stage 1: Candidate Detection (all patterns → _candidate_rings) ----
+        # ---- Stage 1: Detection algorithms...
+        print(f"[{time.time()-self._start_time:.2f}s] Stage 1: Detection algorithms...")
+        
+        # Run Vectorized RBI Rules
+        rbi_flags = apply_rbi_rules(self.df)
+        for acc, f_flags in rbi_flags.items():
+            self.account_patterns[str(acc)].update(f_flags)
+            
         self.detect_cycles()
         self.detect_shells()
         self.detect_velocity()
         self._extract_smurf_candidates()
         self._score_smurf_candidates()
         self.detect_structuring()
+        self.detect_structuring()
+        self._apply_rule_thresholds()
 
         # ---- Stage 1.5: Immune Account Cleanup ----
         # Strip fraud patterns from immune accounts (keep only immune type tag)
@@ -1735,7 +1852,8 @@ class ForensicsEngine:
         # ---- Stage 3: Pattern Hierarchy ----
         self._apply_pattern_hierarchy()
 
-        # ---- Stage 4: Composite Risk Scoring + Suppression ----
+        # ---- Stage 4: Risk Scoring & Verdicts ----
+        self._assign_structural_roles()
         self.calculate_suspicion_scores()
 
         self._processing_time = time.time() - self._start_time

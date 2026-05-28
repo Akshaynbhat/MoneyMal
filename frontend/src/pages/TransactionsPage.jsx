@@ -51,7 +51,10 @@ export default function TransactionsPage() {
         const output = {
             suspicious_accounts: (result.suspicious_accounts || []).map((a) => ({
                 account_id: a.account_id,
+                verdict: a.verdict || 'APPROVE',
                 suspicion_score: a.suspicion_score,
+                structural_role: a.structural_role || 'LEAF',
+                four_pillar_scores: a.four_pillar_scores || {},
                 detected_patterns: a.detected_patterns || [],
                 ring_id: a.ring_id || null,
             })),

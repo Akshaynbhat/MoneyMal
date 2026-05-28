@@ -24,7 +24,7 @@ export default function GraphPage() {
         );
         const nodeIds = new Set(filteredNodes.map((n) => n.id));
         const filteredEdges = graphData.edges.filter(
-            (e) => nodeIds.has(e.from) || nodeIds.has(e.to)
+            (e) => nodeIds.has(e.from) && nodeIds.has(e.to)
         );
         return { nodes: filteredNodes, edges: filteredEdges };
     }, [graphData, filter]);
@@ -79,15 +79,23 @@ export default function GraphPage() {
                 animate={{ opacity: 1 }}
                 transition={{ delay: 0.1 }}
             >
-                <span className="flex items-center gap-2" style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>
-                    <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#00FF94', display: 'inline-block' }} /> Safe
-                </span>
-                <span className="flex items-center gap-2" style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>
-                    <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#FF9F1C', display: 'inline-block' }} /> Suspicious
-                </span>
-                <span className="flex items-center gap-2" style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>
-                    <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#FF3B3B', display: 'inline-block' }} /> High Risk
-                </span>
+                <div className="flex flex-wrap gap-4 px-2" style={{ borderLeft: '1px solid rgba(255,255,255,0.1)' }}>
+                    <span className="flex items-center gap-2" style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>
+                        <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#9b59b6', display: 'inline-block', boxShadow: '0 0 6px rgba(155,89,182,0.5)' }} /> HUB
+                    </span>
+                    <span className="flex items-center gap-2" style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>
+                        <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#e67e22', display: 'inline-block', boxShadow: '0 0 6px rgba(230,126,34,0.5)' }} /> BRIDGE
+                    </span>
+                    <span className="flex items-center gap-2" style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>
+                        <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#f1c40f', display: 'inline-block', boxShadow: '0 0 6px rgba(241,196,15,0.5)' }} /> MULE
+                    </span>
+                    <span className="flex items-center gap-2" style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>
+                        <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#3498db', display: 'inline-block', boxShadow: '0 0 6px rgba(52,152,219,0.5)' }} /> LEAF
+                    </span>
+                    <span className="flex items-center gap-2" style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>
+                        <span style={{ width: 12, height: 12, borderRadius: '50%', background: 'transparent', border: '2.5px solid #fff', display: 'inline-block' }} /> Ring Member
+                    </span>
+                </div>
             </motion.div>
 
             {/* Graph */}

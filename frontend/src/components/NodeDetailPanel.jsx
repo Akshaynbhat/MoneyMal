@@ -3,9 +3,13 @@ import { motion } from 'framer-motion';
 export default function NodeDetailPanel({ node, onClose }) {
     if (!node) return null;
 
-    const score = node.suspicion_score || 0;
-    const scoreColor = score > 70 ? 'var(--color-risk-red)' : score > 30 ? 'var(--color-risk-orange)' : 'var(--color-risk-green)';
-    const riskLabel = score > 70 ? 'HIGH RISK MULE' : score > 30 ? 'SUSPICIOUS' : 'SAFE';
+    const score = Number(node.suspicion_score || 0).toFixed(1);
+    const verdict = node.verdict || 'APPROVE';
+    const role = node.structural_role || 'LEAF';
+    const scoreColor = verdict === 'BLOCK' ? 'var(--color-risk-red)' : verdict === 'REVIEW' ? 'var(--color-risk-orange)' : 'var(--color-risk-green)';
+    const roleColor = role === 'HUB' ? '#9b59b6' : role === 'BRIDGE' ? '#e67e22' : role === 'MULE' ? '#f1c40f' : '#3498db';
+    const four_pillars = node.four_pillar_scores || {GAT: 0, LSTM: 0, EIF: 0, Rules: 0, Multiplier: 1.0};
+    const riskLabel = score > 70 ? 'CRITICAL RISK' : score > 30 ? 'ELEVATED RISK' : 'LOW RISK';
 
     return (
         <motion.div
@@ -30,7 +34,7 @@ export default function NodeDetailPanel({ node, onClose }) {
             {/* Header */}
             <div style={{ marginBottom: 24 }}>
                 <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--color-text-dim)', letterSpacing: '0.1em', marginBottom: 4 }}>
-                    ACCOUNT DETAILS
+                    ACCOUNT DETAILS <span style={{ color: roleColor, fontWeight: 'bold' }}>[{role}]</span>
                 </p>
                 <h2 style={{ fontFamily: 'var(--font-mono)', fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-accent)' }}>
                     {node.id}
@@ -39,26 +43,46 @@ export default function NodeDetailPanel({ node, onClose }) {
 
             {/* Risk Score Card */}
             <div className="glass-card p-5 mb-5" style={{ borderColor: `${scoreColor}30` }}>
-                <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--color-text-dim)', letterSpacing: '0.08em', marginBottom: 8 }}>
-                    RISK SCORE
-                </p>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '2.5rem', fontWeight: 800, color: scoreColor, lineHeight: 1 }}>
-                    {score}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div>
+                        <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--color-text-dim)', letterSpacing: '0.08em', marginBottom: 8 }}>
+                            ENFORCEMENT VERDICT
+                        </p>
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: '2rem', fontWeight: 800, color: scoreColor, lineHeight: 1 }}>
+                            {verdict}
+                        </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                        <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--color-text-dim)', letterSpacing: '0.08em', marginBottom: 4 }}>
+                            COMBINED SCORE
+                        </p>
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: '1.5rem', fontWeight: 700, color: '#fff' }}>
+                            {score}
+                        </div>
+                    </div>
                 </div>
-                <div style={{ marginTop: 10, height: 6, background: 'rgba(0,245,255,0.06)', borderRadius: 3, overflow: 'hidden' }}>
+
+                <div style={{ marginTop: 20, height: 6, background: 'rgba(0,245,255,0.06)', borderRadius: 3, overflow: 'hidden' }}>
                     <motion.div
                         initial={{ width: 0 }}
-                        animate={{ width: `${score}%` }}
+                        animate={{ width: `${Math.min(100, score)}%` }}
                         transition={{ duration: 0.8, ease: 'easeOut' }}
                         style={{ height: '100%', background: scoreColor, borderRadius: 3, boxShadow: `0 0 10px ${scoreColor}50` }}
                     />
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
-                    <span style={{ fontSize: '0.6rem', color: 'var(--color-text-dim)', fontFamily: 'var(--font-mono)' }}>0</span>
-                    <span className={`badge ${score > 70 ? 'badge-high' : score > 30 ? 'badge-medium' : 'badge-low'}`}>
-                        {riskLabel}
-                    </span>
-                    <span style={{ fontSize: '0.6rem', color: 'var(--color-text-dim)', fontFamily: 'var(--font-mono)' }}>100</span>
+                
+                {/* 4 Pillar Breakdown */}
+                <div style={{ marginTop: 16, background: 'rgba(0,0,0,0.2)', padding: '10px', borderRadius: '6px' }}>
+                    <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--color-text-dim)', letterSpacing: '0.08em', marginBottom: 8 }}>4-PILLAR BREAKDOWN</p>
+                    <div className="grid grid-cols-2 gap-2" style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: '#8b949e' }}>
+                        <div className="flex justify-between"><span>GAT (35%)</span> <span style={{color: '#fff'}}>{four_pillars.GAT}</span></div>
+                        <div className="flex justify-between"><span>LSTM (25%)</span> <span style={{color: '#fff'}}>{four_pillars.LSTM}</span></div>
+                        <div className="flex justify-between"><span>EIF (20%)</span> <span style={{color: '#fff'}}>{four_pillars.EIF}</span></div>
+                        <div className="flex justify-between"><span>Rules (20%)</span> <span style={{color: '#fff'}}>{four_pillars.Rules}</span></div>
+                    </div>
+                    <div className="mt-2 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.1)', fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: '#8b949e' }}>
+                        Structural Multiplier: <span style={{color: '#58a6ff'}}>{Number(four_pillars.Multiplier).toFixed(2)}x</span>
+                    </div>
                 </div>
             </div>
 
@@ -78,13 +102,13 @@ export default function NodeDetailPanel({ node, onClose }) {
                 </div>
                 <div className="glass-card p-3 text-center">
                     <div style={{ fontFamily: 'var(--font-mono)', fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-risk-green)' }}>
-                        {node.total_incoming != null ? `$${node.total_incoming.toLocaleString()}` : '—'}
+                        {node.total_incoming != null ? `₹${node.total_incoming.toLocaleString()}` : '—'}
                     </div>
                     <div className="metric-label">Total Incoming</div>
                 </div>
                 <div className="glass-card p-3 text-center">
                     <div style={{ fontFamily: 'var(--font-mono)', fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-risk-orange)' }}>
-                        {node.total_outgoing != null ? `$${node.total_outgoing.toLocaleString()}` : '—'}
+                        {node.total_outgoing != null ? `₹${node.total_outgoing.toLocaleString()}` : '—'}
                     </div>
                     <div className="metric-label">Total Outgoing</div>
                 </div>
