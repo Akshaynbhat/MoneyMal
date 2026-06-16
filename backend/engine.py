@@ -1658,6 +1658,7 @@ class ForensicsEngine:
             if 'F6_COORDINATED_GROUP' in patterns: rules_score += 25.0
             if 'F7_OUTLIER_TXN' in patterns: rules_score += 15.0
             if 'F8_NEW_ACC_HIGH_VAL' in patterns: rules_score += 20.0
+            if 'F10_CROSS_BANK_LAYERING' in patterns: rules_score += 25.0
             
             rules_score = min(25.0, rules_score)  # Can exceed 20 to guarantee REVIEW
             
@@ -1671,7 +1672,8 @@ class ForensicsEngine:
             # Guarantee REVIEW (40) for strong fraud patterns as per specs
             STRONG_FRAUD_PATTERNS = {
                 'cycle_length_3', 'cycle_length_4', 'cycle_length_5', 'shell_account', 'smurfing', 'threshold_breach',
-                'F1_FAST_PASSTHROUGH', 'F3_MICRO_SMURFING', 'F6_COORDINATED_GROUP', 'F2_DORMANT_BURST', 'F8_NEW_ACC_HIGH_VAL'
+                'F1_FAST_PASSTHROUGH', 'F3_MICRO_SMURFING', 'F6_COORDINATED_GROUP', 'F2_DORMANT_BURST', 'F8_NEW_ACC_HIGH_VAL',
+                'F10_CROSS_BANK_LAYERING'
             }
             has_strong_fraud = bool(patterns & STRONG_FRAUD_PATTERNS)
             if has_strong_fraud and raw_score < (40.0 / mult):

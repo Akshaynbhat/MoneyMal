@@ -1,5 +1,34 @@
 import { motion } from 'framer-motion';
 
+const PATTERN_LABELS = {
+    'F1_FAST_PASSTHROUGH': 'F1: Fast Passthrough',
+    'F2_DORMANT_BURST': 'F2: Dormant Burst',
+    'F3_MICRO_SMURFING': 'F3: Micro-Smurfing',
+    'F4_MACRO_VOLUME_OUTLIER': 'F4: Macro Volume Outlier',
+    'F5_RAPID_OUTBOUND': 'F5: Rapid Outbound',
+    'F6_COORDINATED_GROUP': 'F6: Coordinated Group',
+    'F7_OUTLIER_TXN': 'F7: Outlier Transaction',
+    'F8_NEW_ACC_HIGH_VAL': 'F8: New Account High Value',
+    'F10_CROSS_BANK_LAYERING': 'F10: Cross-Bank Layering',
+    'cycle_length_3': 'Circular Loop (L3)',
+    'cycle_length_4': 'Circular Loop (L4)',
+    'cycle_length_5': 'Circular Loop (L5)',
+    'shell_account': 'Shell Intermediary',
+    'smurfing': 'Smurfing Pattern',
+    'threshold_breach': 'Limit Threshold Breach',
+    'high_velocity': 'High-Velocity Transfer',
+    'low_variance': 'Low Variance Pattern'
+};
+
+const getBankName = (accountId) => {
+    if (!accountId) return 'N/A';
+    const parts = accountId.split('_');
+    if (parts.length >= 2 && parts[0] === 'BNK') {
+        return `Bank ${parts[1]}`;
+    }
+    return 'Internal / Unknown';
+};
+
 export default function NodeDetailPanel({ node, onClose }) {
     if (!node) return null;
 
@@ -36,9 +65,12 @@ export default function NodeDetailPanel({ node, onClose }) {
                 <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--color-text-dim)', letterSpacing: '0.1em', marginBottom: 4 }}>
                     ACCOUNT DETAILS <span style={{ color: roleColor, fontWeight: 'bold' }}>[{role}]</span>
                 </p>
-                <h2 style={{ fontFamily: 'var(--font-mono)', fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-accent)' }}>
+                <h2 style={{ fontFamily: 'var(--font-mono)', fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-accent)', marginBottom: 2 }}>
                     {node.id}
                 </h2>
+                <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: '#58a6ff' }}>
+                    Institution: <span style={{ fontWeight: 'bold' }}>{getBankName(node.id)}</span>
+                </p>
             </div>
 
             {/* Risk Score Card */}
@@ -122,7 +154,9 @@ export default function NodeDetailPanel({ node, onClose }) {
                 <div className="flex flex-wrap gap-2">
                     {(node.detected_patterns || []).length > 0 ? (
                         node.detected_patterns.map((p) => (
-                            <span key={p} className="pattern-chip" style={{ padding: '4px 10px' }}>{p}</span>
+                            <span key={p} className="pattern-chip" style={{ padding: '4px 10px' }}>
+                                {PATTERN_LABELS[p] || p}
+                            </span>
                         ))
                     ) : (
                         <span style={{ color: 'var(--color-text-dim)', fontSize: '0.75rem', fontFamily: 'var(--font-mono)' }}>

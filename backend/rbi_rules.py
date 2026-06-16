@@ -133,6 +133,35 @@ def apply_rbi_rules(df: pd.DataFrame) -> dict:
             rolling_out = outbound_indexed['transaction_id'].rolling('1h').count()
             if (rolling_out >= 4).any():
                 flags[acc].append('F5_RAPID_OUTBOUND')
+
+        # ---------------------------------------------------------
+        # Rule F10: Cross-Bank Layering (interacted with 3+ unique banks in a 24h window)
+        # ---------------------------------------------------------
+        acc_txns = df_sorted[(df_sorted['sender_id'] == acc) | (df_sorted['receiver_id'] == acc)]
+        if len(acc_txns) >= 3:
+            counterparties = []
+            for _, r in acc_txns.iterrows():
+                other = r['receiver_id'] if r['sender_id'] == acc else r['sender_id']
+                # Extract bank ID like "BNK_07" from "BNK_07_ACC_0001"
+                parts = other.split('_')
+                bank_id = f"{parts[0]}_{parts[1]}" if len(parts) >= 2 and parts[0] == "BNK" else "Unknown"
+                counterparties.append({
+                    'timestamp': r['timestamp'],
+                    'bank_id': bank_id
+                })
+            
+            cp_df = pd.DataFrame(counterparties).sort_values('timestamp')
+            has_f10 = False
+            for i in range(len(cp_df)):
+                t_start = cp_df.iloc[i]['timestamp']
+                t_end = t_start + pd.Timedelta(hours=24)
+                window_df = cp_df[(cp_df['timestamp'] >= t_start) & (cp_df['timestamp'] <= t_end)]
+                unique_banks = window_df['bank_id'].nunique()
+                if unique_banks >= 3:
+                    has_f10 = True
+                    break
+            if has_f10:
+                flags[acc].append('F10_CROSS_BANK_LAYERING')
                 
     # DEBUG PRINT
     flag_counts = {}
