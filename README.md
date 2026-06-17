@@ -33,10 +33,11 @@ MoneyMal is a web-based financial forensics engine that processes transaction CS
 ### Key Features
 
 - **Upload CSV** → instant graph analysis with sub-second processing
-- **Interactive network graph** with color-coded risk tiers (vis.js)
-- **Downloadable JSON report** in exact hackathon-spec format
-- **Fraud ring summary table** with risk scores
-- **Click-to-inspect** forensic cards showing account-level detail
+- **Fuzzy Column Mapping** → loose and normalized header matching with immediate validation warnings
+- **Interactive Network Graph** with color-coded risk tiers (vis.js)
+- **Deep Node Inspector** → 5-tab side panel detailing Overview, Transactions logs, Ring details with flow diagrams, Connected accounts, and ML scores
+- **Downloadable JSON Report** in exact hackathon-spec format
+- **Fraud Ring Summary Table** with risk scores
 - **Dark "Threat Matrix" UI** with glassmorphism and micro-animations
 
 ---
@@ -221,16 +222,22 @@ npm run dev
 
 ## Usage Instructions
 
-1. **Open** `http://localhost:5173` in your browser
-2. **Upload** a CSV file with columns: `transaction_id`, `sender_id`, `receiver_id`, `amount`, `timestamp`
-3. **Click** `▶ ANALYZE` (or drag-and-drop the CSV onto the upload zone)
-4. **View results:**
-   - **KPI cards** show total accounts, flagged accounts, rings detected, processing time
-   - **Network graph** shows all accounts and transactions with color-coded risk tiers
-   - **Fraud Ring Summary** table lists all detected rings with risk scores
-   - **Suspicious Accounts** table shows all flagged accounts with scores and patterns
-5. **Click** any node in the graph or row in the table to open the **Forensic Card** detail view
-6. **Download** the JSON report with the `⬇ DOWNLOAD FORENSIC REPORT` button
+1. **Open** `http://localhost:5173` in your browser.
+2. **Select or Upload** a CSV file. The engine will automatically run a pre-upload **Fuzzy Column Mapping Preview** to detect columns even if they are named differently (e.g., `Source_Account`, `Transfer_Amount`).
+3. If any required columns are missing, a warning will block analysis until a valid CSV is uploaded.
+4. **Click** `▶ LAUNCH ANALYSIS` once the green ready check is shown.
+5. **View results:**
+   - **KPI cards** show total accounts, flagged accounts, rings detected, and processing time.
+   - **Network graph** shows all accounts and transactions with color-coded risk tiers.
+   - **Fraud Ring Summary** table lists all detected rings with risk scores.
+   - **Suspicious Accounts** table shows flagged accounts (clicking one redirects to the graph and inspects the node).
+6. **Inspect Nodes**: Click any node in the graph, member in the ring list, or counterparty in the transaction logs to open the **Node Inspector Panel** showing:
+   - **Overview**: Dynamic risk brief and key statistics.
+   - **Transactions**: All incoming/outgoing transfers with interactive counterparty links.
+   - **Ring**: Ring flow diagrams and other group members.
+   - **Connected**: List of all 1-hop neighbors and risk metrics.
+   - **ML Scores**: Weighted formula equation display and triggered compliance flags.
+7. **Download** the JSON report with the `⬇ DOWNLOAD FORENSIC REPORT` button.
 
 ### Test Data
 
