@@ -53,6 +53,7 @@ It actively assigns structural roles (HUB, BRIDGE, MULE, LEAF) to exposed networ
 - **4-Pillar ML Scoring:** Graph Attention proxy (PageRank), LSTM-style burst timing, Extended Isolation Forest, and RBI rule scoring, combined with role multipliers.
 - **Node Inspector Panel:** click any account in the graph to open a 5-tab deep-dive — Overview, Transactions, Ring, Connected Accounts, ML Scores.
 - **Enforcement Decisions:** automated BLOCK, REVIEW, or APPROVE verdicts per account.
+- **Transactions Explorer & Detail Inspector:** new ledger view with pagination, search, and sorting, featuring visual pathway flows and inline profile inspectors.
 - **Downloadable JSON report**, fraud ring summary table, and dark "Threat Matrix" UI.
 
 ---
@@ -266,6 +267,38 @@ Clicking a counterparty or ring member inside any tab navigates the panel to tha
 
 ---
 
+## Compliance Configuration & Rules
+
+### Account-Type Thresholds
+
+Separate fraud thresholds per account type, configurable in `backend/account_thresholds.yaml` without touching code.
+
+| Account Type | Single Tx Limit | Velocity (10 min) | Daily Limit |
+| :--- | :--- | :--- | :--- |
+| **SAVINGS** | ₹50,000 | 5 transactions | ₹1,00,000 |
+| **GENERAL / CURRENT** | ₹2,00,000 | 10 transactions | ₹5,00,000 |
+| **PREMIUM** | ₹10,00,000 | 15 transactions | ₹25,00,000 |
+| **BUSINESS** | ₹50,00,000 | 30 transactions | ₹2,00,00,000 |
+| **CREDIT_CARD** | 80% of credit limit | 8 tx in 5 min | Credit limit |
+
+### RBI/NPCI Rules Engine
+
+9 active rules (F1–F10, F7 removed — no device data available):
+
+| Flag | Rule | Detection Method |
+| :--- | :--- | :--- |
+| **F1** | ≥90% of inbound re-transmitted within 2 hours | Vectorized time-window scan |
+| **F2** | Dormant account (180+ day gap) suddenly bursts | Real gap detection + burst count |
+| **F3** | 50+ small payments (<₹500) from 25+ unique senders | Aggregated groupby count |
+| **F4** | Total transaction volume > 10× dataset median × 20 | Volume threshold check |
+| **F5** | 4+ outbound transactions within 1 hour of receiving | Per-event sliding window |
+| **F6** | Coordinated group — shares identical top-receiver pattern with 3+ accounts | Receiver fingerprint matching |
+| **F7** | Low-value account profile with outlier high-value transaction | CV + max/median ratio |
+| **F8** | Account < 7 days old with 2+ high-value transactions | First-seen age check |
+| **F9** | Part of a detected cycle of length ≥ 4 | Pre-computed from engine cycle sets |
+
+---
+
 ## Installation & Setup
 
 ### Prerequisites
@@ -307,6 +340,7 @@ Guest access is available with no login required — open `http://localhost:5173
    - Inspect the **Network graph** and click any node to open the 5-tab Node Inspector.
    - Trace money trails by clicking counterparties or ring members inside the inspector.
    - Examine the **Suspicious Accounts** table for individual pillar scores and triggered flags.
+   - Switch to the **All Transactions Ledger** tab to query, sort, and paginate through the entire ledger, and click on any transaction to inspect it or view the flow pathway.
 6. **Download** the generated JSON forensics report.
 
 ---
@@ -356,6 +390,24 @@ To reproduce this benchmark yourself, run the verification script in `backend/va
 
 ---
 
+## 🚀 Recent Enhancements (v6.0+)
+
+We have introduced several key visual and functional features to improve usability and verification capabilities:
+
+### 1. Fuzzy Column Mapping & Ingestion Validation
+- Matches source headers dynamically using loose/normalized name mapping (supporting variations of `from_account`, `destination`, `amount`, etc.).
+- Renders a pre-upload validation report indicating mapped column headers and warning the user if required fields are missing.
+
+### 2. Interactive Node Inspector Panel
+- A slide-in forensics drawer containing 5 tabs (**Overview**, **Transactions**, **Ring**, **Connected**, **ML Scores**) that drills down into the profile of any selected account.
+- Dynamically calculates the account's localized ledger metrics, role multipliers, and prints a clear plain-English compliance narrative explaining the risk factors.
+
+### 3. Transactions Explorer & Detail Inspector
+- Adds a new explorer tab providing pagination, search, and sorting over the entire transaction ledger.
+- Integrates the Node Inspector inline, allowing analysts to inspect sender and receiver profiles in one click directly from the transaction ledger.
+- Includes a Transaction Detail Inspector displaying path flows, amounts, timestamps, and triggered compliance rules.
+
+---
 
 ## Team Members
 

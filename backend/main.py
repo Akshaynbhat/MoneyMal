@@ -283,6 +283,87 @@ async def get_account(account_id: str):
     })
 
 
+@app.get("/api/transactions")
+async def get_all_transactions(
+    page: int = 1,
+    limit: int = 100,
+    search: Optional[str] = None,
+    sort_by: str = "timestamp",
+    sort_dir: str = "desc"
+):
+    global _last_df, _last_engine
+    if _last_df is None or _last_engine is None:
+        raise HTTPException(status_code=400, detail="No active analysis session found. Please run the analysis first.")
+    
+    df = _last_df.copy()
+    
+    for col in ['sender_id', 'receiver_id', 'transaction_id']:
+        if col in df.columns:
+            df[col] = df[col].astype(str)
+            
+    if search:
+        q = search.strip().lower()
+        df = df[
+            df['sender_id'].str.lower().str.contains(q) |
+            df['receiver_id'].str.lower().str.contains(q) |
+            df['transaction_id'].str.lower().str.contains(q)
+        ]
+        
+    if sort_by in df.columns:
+        df = df.sort_values(sort_by, ascending=(sort_dir == "asc"))
+    else:
+        df = df.sort_values("timestamp", ascending=False)
+        
+    total_records = len(df)
+    
+    start = (page - 1) * limit
+    end = start + limit
+    df_page = df.iloc[start:end]
+    
+    transactions = []
+    for _, row in df_page.iterrows():
+        tx_sender = str(row['sender_id'])
+        tx_receiver = str(row['receiver_id'])
+        
+        is_ring_tx = False
+        sender_ring = None
+        receiver_ring = None
+        for ring in _last_engine.fraud_rings:
+            if tx_sender in ring["member_accounts"] and tx_receiver in ring["member_accounts"]:
+                is_ring_tx = True
+            if tx_sender in ring["member_accounts"]:
+                sender_ring = ring["ring_id"]
+            if tx_receiver in ring["member_accounts"]:
+                receiver_ring = ring["ring_id"]
+                
+        transactions.append({
+            "transaction_id": str(row['transaction_id']),
+            "sender_id": tx_sender,
+            "sender_score": _last_engine.suspicion_scores.get(tx_sender, 0.0),
+            "sender_role": _last_engine.node_roles.get(tx_sender, "LEAF"),
+            "sender_ring": sender_ring,
+            "receiver_id": tx_receiver,
+            "receiver_score": _last_engine.suspicion_scores.get(tx_receiver, 0.0),
+            "receiver_role": _last_engine.node_roles.get(tx_receiver, "LEAF"),
+            "receiver_ring": receiver_ring,
+            "amount": float(row['amount']),
+            "timestamp": str(row['timestamp']),
+            "is_ring_transaction": is_ring_tx,
+            "sender_patterns": list(_last_engine.account_patterns.get(tx_sender, set())),
+            "receiver_patterns": list(_last_engine.account_patterns.get(tx_receiver, set())),
+        })
+        
+    return JSONResponse(content={
+        "transactions": transactions,
+        "total": total_records,
+        "page": page,
+        "limit": limit
+    })
+
+
+
+
+
 @app.post("/api/preview_mapping")
 async def preview_mapping(file: UploadFile = File(...)):
     """

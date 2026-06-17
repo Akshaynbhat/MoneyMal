@@ -89,3 +89,9 @@ export async function getAccountDetail(accountId) {
     const res = await API.get(`/account/${accountId}`);
     return res.data;
 }
+
+export async function getTransactions(params) {
+    const res = await API.get('/transactions', { params });
+    return res.data;
+}
+
