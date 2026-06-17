@@ -5,9 +5,7 @@ networkx
 numpy
 scikit-learn
 python-multipart
-sqlalchemy
-psycopg2-binary
-asyncpg
-redis
-
 PyYAML
+xgboost
+imbalanced-learn
+rapidfuzz

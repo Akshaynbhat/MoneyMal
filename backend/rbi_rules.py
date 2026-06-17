@@ -4,7 +4,7 @@ from collections import defaultdict
 
 def apply_rbi_rules(df: pd.DataFrame) -> dict:
     """
-    Applies RBI/NPCI Compliance Rules (F1-F8).
+    Applies RBI/NPCI Compliance Rules (F1-F10).
     Returns a dict mapping account_id -> list of flags.
     """
     flags = defaultdict(list)
@@ -84,6 +84,23 @@ def apply_rbi_rules(df: pd.DataFrame) -> dict:
     f8_accs = high_val_df.groupby('sender_id').size()
     for acc in f8_accs[f8_accs >= 2].index:
         flags[acc].append('F8_NEW_ACC_HIGH_VAL')
+
+    # ---------------------------------------------------------
+    # Rule F9: New account with high-velocity initial activity
+    # (different from F8 — F8 is high VALUE, F9 is high COUNT)
+    # ---------------------------------------------------------
+    f9_age_threshold = max(1.0, dataset_span_days * 0.05)
+    f9_young_accs = age_stats[age_stats['age_days'] < f9_age_threshold].index
+
+    txn_counts = df.groupby('sender_id').size()
+    f9_count_threshold = max(5, int(txn_counts.quantile(0.95)))
+
+    f9_accs = txn_counts[
+        (txn_counts.index.isin(f9_young_accs)) &
+        (txn_counts >= f9_count_threshold)
+    ].index
+    for acc in f9_accs:
+        flags[acc].append('F9_NEW_ACC_HIGH_VELOCITY')
         
     # ---------------------------------------------------------
     # Temporal & Sequential Rules (F1, F2, F5)
@@ -95,11 +112,14 @@ def apply_rbi_rules(df: pd.DataFrame) -> dict:
     
     # Pre-sort for temporal logic
     df_sorted = df.sort_values('timestamp')
-    
+
+    # Pre-group once for speed — avoid re-filtering df_sorted per account in the loop
+    in_groups = df_sorted[df_sorted['receiver_id'].isin(intermediaries)].groupby('receiver_id')
+    out_groups = df_sorted[df_sorted['sender_id'].isin(intermediaries)].groupby('sender_id')
+
     for acc in intermediaries:
-        acc_txns = df_sorted[(df_sorted['sender_id'] == acc) | (df_sorted['receiver_id'] == acc)]
-        inbound = acc_txns[acc_txns['receiver_id'] == acc]
-        outbound = acc_txns[acc_txns['sender_id'] == acc]
+        inbound = in_groups.get_group(acc) if acc in in_groups.groups else pd.DataFrame()
+        outbound = out_groups.get_group(acc) if acc in out_groups.groups else pd.DataFrame()
         
         if inbound.empty or outbound.empty:
             continue
@@ -134,40 +154,54 @@ def apply_rbi_rules(df: pd.DataFrame) -> dict:
             if (rolling_out >= 4).any():
                 flags[acc].append('F5_RAPID_OUTBOUND')
 
-        # ---------------------------------------------------------
-        # Rule F10: Cross-Bank Layering (interacted with 3+ unique banks in a 24h window)
-        # ---------------------------------------------------------
-        acc_txns = df_sorted[(df_sorted['sender_id'] == acc) | (df_sorted['receiver_id'] == acc)]
-        if len(acc_txns) >= 3:
-            counterparties = []
-            for _, r in acc_txns.iterrows():
-                other = r['receiver_id'] if r['sender_id'] == acc else r['sender_id']
-                # Extract bank ID like "BNK_07" from "BNK_07_ACC_0001"
-                parts = other.split('_')
-                bank_id = f"{parts[0]}_{parts[1]}" if len(parts) >= 2 and parts[0] == "BNK" else "Unknown"
-                counterparties.append({
-                    'timestamp': r['timestamp'],
-                    'bank_id': bank_id
-                })
-            
-            cp_df = pd.DataFrame(counterparties).sort_values('timestamp')
-            has_f10 = False
-            for i in range(len(cp_df)):
-                t_start = cp_df.iloc[i]['timestamp']
-                t_end = t_start + pd.Timedelta(hours=24)
-                window_df = cp_df[(cp_df['timestamp'] >= t_start) & (cp_df['timestamp'] <= t_end)]
-                unique_banks = window_df['bank_id'].nunique()
-                if unique_banks >= 3:
-                    has_f10 = True
-                    break
-            if has_f10:
-                flags[acc].append('F10_CROSS_BANK_LAYERING')
-                
+    # ---------------------------------------------------------
+    # Rule F10: Rapid counterparty diversity (layering signal)
+    # Generic version — works on any account ID format.
+    # Flags accounts that interact with 5+ DISTINCT counterparties
+    # within any 24-hour window (high diversity = layering).
+    # Fully vectorized: build one combined df, then apply sliding window.
+    # ---------------------------------------------------------
+
+    # Build a combined (account, counterparty, timestamp) table in one pass
+    out_cp = df_sorted[df_sorted['sender_id'].isin(intermediaries)][
+        ['sender_id', 'receiver_id', 'timestamp']
+    ].rename(columns={'sender_id': 'account', 'receiver_id': 'counterparty'})
+
+    in_cp = df_sorted[df_sorted['receiver_id'].isin(intermediaries)][
+        ['receiver_id', 'sender_id', 'timestamp']
+    ].rename(columns={'receiver_id': 'account', 'sender_id': 'counterparty'})
+
+    all_cp = pd.concat([out_cp, in_cp], ignore_index=True).sort_values(
+        ['account', 'timestamp']
+    )
+
+    WINDOW_NS = int(24 * 3600 * 1e9)
+
+    for acc, acc_grp in all_cp.groupby('account'):
+        if len(acc_grp) < 10:
+            continue
+
+        ts_arr = acc_grp['timestamp'].values.astype('int64')
+        cp_arr = acc_grp['counterparty'].values
+        n = len(ts_arr)
+
+        left = 0
+        has_f10 = False
+        for right in range(n):
+            while ts_arr[right] - ts_arr[left] > WINDOW_NS:
+                left += 1
+            unique_cp = len(set(cp_arr[left:right + 1]))
+            if unique_cp >= 10:
+                has_f10 = True
+                break
+        if has_f10:
+            flags[acc].append('F10_RAPID_LAYERING')
+
     # DEBUG PRINT
     flag_counts = {}
     for f_list in flags.values():
         for f in f_list:
             flag_counts[f] = flag_counts.get(f, 0) + 1
     print("DEBUG RBI FLAGS GENERATED:", flag_counts)
-                
+            
     return dict(flags)

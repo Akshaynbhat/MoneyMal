@@ -34,6 +34,7 @@ from sklearn.ensemble import IsolationForest
 import yaml
 from pathlib import Path
 from backend.rbi_rules import apply_rbi_rules
+from backend.data_ingestion import CANONICAL_ALIASES, build_column_mapping
 
 
 # ====================================================================== #
@@ -197,35 +198,26 @@ class ForensicsEngine:
     #  1. DATA LOADING                                                    #
     # ================================================================== #
 
-    COLUMN_ALIASES = {
-        'transaction_id': ['txn_id', 'id', 'ref_no', 'trx_id'],
-        'sender_id': ['from_account', 'payer_id', 'originator', 'sender'],
-        'receiver_id': ['to_account', 'payee_id', 'beneficiary', 'destination'],
-        'amount': ['txn_amount', 'transaction_amount', 'amt', 'value'],
-        'timestamp': ['date', 'txn_date', 'created_at', 'datetime'],
-        'account_type': ['acc_type', 'type'],
-        'credit_limit': ['limit']
-    }
-
     def load_data(self, df: pd.DataFrame) -> None:
         df = df.copy()
-        
-        # Fuzzy / alias column matching
-        df_cols_lower = {c.lower(): c for c in df.columns}
+        mapping_result = build_column_mapping(df)
+        mapping = mapping_result["mapping"]
+
         rename_map = {}
-        for canonical, aliases in self.COLUMN_ALIASES.items():
-            if canonical in df_cols_lower:
-                rename_map[df_cols_lower[canonical]] = canonical
-            else:
-                for alias in aliases:
-                    if alias in df_cols_lower:
-                        rename_map[df_cols_lower[alias]] = canonical
-                        break
+        for canonical, info in mapping.items():
+            if info:
+                rename_map[info["original_column"]] = canonical
         df.rename(columns=rename_map, inplace=True)
 
         missing = [c for c in self.REQUIRED_COLUMNS if c not in df.columns]
         if missing:
-            raise ValueError(f'Missing required columns: {missing}')
+            available = list(df.columns)
+            raise ValueError(
+                f"Missing required columns: {missing}. "
+                f"Your file's actual columns are: {available}. "
+                f"Rename the relevant column(s) to one of: "
+                f"sender_id, receiver_id, amount, timestamp, transaction_id."
+            )
 
         df['amount'] = pd.to_numeric(df['amount'], errors='coerce')
         df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
@@ -824,60 +816,64 @@ class ForensicsEngine:
                         self.account_patterns[acc].add("high_velocity_24h")
                         break
 
-        # ---- Low Amount Variance Detection (from old code) ----
-        account_amounts: dict[str, list[float]] = defaultdict(list)
-        for _, row in self.df.iterrows():
-            account_amounts[row["sender_id"]].append(float(row["amount"]))
-            account_amounts[row["receiver_id"]].append(float(row["amount"]))
+        # ---- Low Amount Variance Detection (vectorized) ----
+        # Build per-account stats using stack/groupby instead of iterrows
+        sender_amts = self.df[["sender_id", "amount"]].rename(columns={"sender_id": "account"})
+        receiver_amts = self.df[["receiver_id", "amount"]].rename(columns={"receiver_id": "account"})
+        all_amts = pd.concat([sender_amts, receiver_amts], ignore_index=True)
+        all_amts["amount"] = all_amts["amount"].astype(float)
 
-        for account, amounts in account_amounts.items():
-            if len(amounts) < 2:
-                continue
-            cv = _coefficient_of_variation(amounts)
-            if cv < 0.2:
-                self._low_variance_accounts.add(account)
-                self.account_patterns[account].add("low_variance")
+        # Compute mean and std per account vectorized
+        grouped = all_amts.groupby("account")["amount"]
+        acc_mean = grouped.mean()
+        acc_std = grouped.std(ddof=0)  # population std
+        acc_count = grouped.count()
+        # cv_series: keyed by account_id
+        cv_series = (acc_std / acc_mean.replace(0, np.nan)).fillna(0)
 
-        # ---- High-Degree Hub Suppression Detection (from old code) ----
+        low_var_accs = cv_series[(acc_count >= 2) & (cv_series < 0.2)].index
+        for account in low_var_accs:
+            self._low_variance_accounts.add(account)
+            self.account_patterns[account].add("low_variance")
+
+
+        # ---- High-Degree Hub Suppression Detection (vectorized) ----
         # Accounts with degree > 50, long activity span, and high variance
         # are likely commercial hubs, not fraud participants.
         dataset_span = self._dataset_time_span
         if dataset_span > 0:
-            account_timestamps: dict[str, list] = defaultdict(list)
-            for _, row in self.df.iterrows():
-                for acc in [row["sender_id"], row["receiver_id"]]:
-                    account_timestamps[acc].append(row["timestamp"])
+            # Vectorized: compute first/last seen per account
+            sender_ts = self.df[["sender_id", "timestamp"]].rename(columns={"sender_id": "acc"})
+            receiver_ts = self.df[["receiver_id", "timestamp"]].rename(columns={"receiver_id": "acc"})
+            all_ts_df = pd.concat([sender_ts, receiver_ts], ignore_index=True)
+            acc_first = all_ts_df.groupby("acc")["timestamp"].min()
+            acc_last = all_ts_df.groupby("acc")["timestamp"].max()
+            acc_span = (acc_last - acc_first).dt.total_seconds()
 
             for node in self.G.nodes():
                 total_degree = self.G.in_degree(node) + self.G.out_degree(node)
                 if total_degree <= 50:
                     continue
 
-                ts_list = account_timestamps.get(node, [])
-                if not ts_list:
+                node_span = acc_span.get(node, 0)
+                if node_span < 0.70 * dataset_span:
                     continue
 
-                activity_span = (max(ts_list) - min(ts_list)).total_seconds()
-                if activity_span < 0.70 * dataset_span:
+                node_cv = cv_series.get(node, 0.0)
+                node_count = acc_count.get(node, 0)
+                if node_count < 2 or node_cv < 0.5:
                     continue
 
-                node_amounts = account_amounts.get(node, [])
-                if len(node_amounts) < 2:
-                    continue
-                cv = _coefficient_of_variation(node_amounts)
-                if cv < 0.5:
-                    continue
 
-                # Check for regular gaps (no large dormancy)
-                ts_sorted = sorted(ts_list)
-                gaps = [(ts_sorted[i + 1] - ts_sorted[i]).total_seconds()
-                        for i in range(len(ts_sorted) - 1)]
-                if gaps:
-                    max_gap = max(gaps)
-                    if max_gap > 0.25 * dataset_span:
+                # Check for regular gaps (no large dormancy) — use pre-grouped timestamps
+                node_ts_df = all_ts_df[all_ts_df["acc"] == node]["timestamp"].sort_values()
+                if len(node_ts_df) > 1:
+                    gaps = node_ts_df.diff().dt.total_seconds().dropna()
+                    if not gaps.empty and gaps.max() > 0.25 * dataset_span:
                         continue
 
                 self._high_degree_hubs.add(node)
+
 
     # ================================================================== #
     #  BUSINESS IMMUNITY LAYER                                             #
@@ -1251,7 +1247,67 @@ class ForensicsEngine:
             if len(qualifying_windows) >= MIN_WINDOWS:
                 self.account_patterns[acc].add("structuring")
 
+    def detect_fan_out(self) -> None:
+        """One account rapidly distributing to many recipients (fan-out layering)."""
+        if self.df is None or self.df.empty:
+            return
+        median_amt = self.df["amount"].median()
+        MIN_RECIPIENTS = 6
+        WINDOW_NS = int(72 * 3600 * 1e9)
+        MIN_TOTAL = median_amt * 5
+
+        sorted_df = self.df.sort_values(["sender_id", "timestamp"])
+        for sender_id, grp in sorted_df.groupby("sender_id"):
+            if sender_id in self._immune_accounts:
+                continue
+            if len(grp) < MIN_RECIPIENTS:
+                continue
+            ts_arr = grp["timestamp"].values.astype(np.int64)
+            amt_arr = grp["amount"].values.astype(float)
+            rec_arr = grp["receiver_id"].values
+            left = 0
+            for right in range(len(ts_arr)):
+                while ts_arr[right] - ts_arr[left] > WINDOW_NS:
+                    left += 1
+                window_recipients = set(rec_arr[left:right + 1])
+                window_amount = float(amt_arr[left:right + 1].sum())
+                if len(window_recipients) >= MIN_RECIPIENTS and window_amount >= MIN_TOTAL:
+                    self._candidate_rings.append({
+                        "members": [sender_id],
+                        "member_accounts": [sender_id],
+                        "pattern_type": "fan_out",
+                        "risk_score": round(min(100.0, len(window_recipients) * 8), 1),
+                        "confidence_score": 0.65,
+                    })
+                    self.account_patterns[sender_id].add("fan_out")
+                    break
+
+    def detect_bipartite(self) -> None:
+        """Accounts sending to and receiving from the same counterparties (circular flow)."""
+        if self.df is None or self.df.empty:
+            return
+        MIN_SHARED = 5
+        send_map = self.df.groupby("sender_id")["receiver_id"].apply(set).to_dict()
+        recv_map = self.df.groupby("receiver_id")["sender_id"].apply(set).to_dict()
+        for acc in set(send_map) | set(recv_map):
+            if acc in self._immune_accounts:
+                continue
+            shared = send_map.get(acc, set()) & recv_map.get(acc, set())
+            if len(shared) >= MIN_SHARED:
+                members = sorted(list(shared) + [acc])
+                self._candidate_rings.append({
+                    "members": members,
+                    "member_accounts": members,
+                    "pattern_type": "bipartite",
+                    "risk_score": round(min(100.0, 40 + len(shared) * 8), 1),
+                    "confidence_score": 0.60,
+                })
+                self.account_patterns[acc].add("bipartite")
+                for s in shared:
+                    self.account_patterns[s].add("bipartite")
+
     def _consolidate_rings(self) -> None:
+
         """
         2-stage ring consolidation pipeline (§2 + §4):
           1. Smurf Consolidation — merge overlapping smurf candidates per core
@@ -1366,7 +1422,8 @@ class ForensicsEngine:
         if not candidates:
             return []
 
-        TYPE_PRIORITY = {"cycle": 0, "smurfing": 1, "shell_network": 2}
+        TYPE_PRIORITY = {"cycle": 0, "smurfing": 1, "fan_out": 2, "bipartite": 3, "shell_network": 4}
+
 
         # Sort: confidence desc, then priority asc (cycle first)
         sorted_cands = sorted(
@@ -1528,7 +1585,8 @@ class ForensicsEngine:
             "high_velocity", "high_velocity_24h", "low_variance",
             "F1_FAST_PASSTHROUGH", "F2_DORMANT_BURST", "F3_MICRO_SMURFING",
             "F4_MACRO_VOLUME_OUTLIER", "F5_RAPID_OUTBOUND", "F6_COORDINATED_GROUP",
-            "F7_OUTLIER_TXN", "F8_NEW_ACC_HIGH_VAL"
+            "F7_OUTLIER_TXN", "F8_NEW_ACC_HIGH_VAL",
+            "F9_NEW_ACC_HIGH_VELOCITY", "F10_RAPID_LAYERING",
         }
 
         for acc in list(self.account_patterns.keys()):
@@ -1582,22 +1640,50 @@ class ForensicsEngine:
         nodes = list(self.G.nodes())
         if not nodes: return
 
-        # 1. GAT Pillar Setup (PageRank)
-        try:
-            pagerank = nx.pagerank(self.G, alpha=0.85, max_iter=100)
-            max_pr = max(pagerank.values()) if pagerank else 1.0
-        except:
-            pagerank = {n: 0.0 for n in nodes}
-            max_pr = 1.0
+        # 1. GAT Pillar Setup (PageRank) — with size guard for speed
+        def _safe_pagerank(G):
+            if G.number_of_nodes() > 8000:
+                deg = dict(G.degree())
+                max_d = max(deg.values()) if deg else 1
+                return {n: v / max_d for n, v in deg.items()}
+            try:
+                return nx.pagerank(G, alpha=0.85, max_iter=30, tol=1e-4)
+            except Exception:
+                deg = dict(G.degree())
+                max_d = max(deg.values()) if deg else 1
+                return {n: v / max_d for n, v in deg.items()}
 
-        # 2. EIF Pillar Setup (Isolation Forest)
-        features = []
-        vol_in_map = self.df.groupby('receiver_id')['amount'].sum().to_dict()
+        pagerank = _safe_pagerank(self.G)
+        max_pr = max(pagerank.values()) if pagerank else 1.0
+
+        # 2. EIF Pillar Setup (Isolation Forest) — 12 features for better separation
+        vol_in_map  = self.df.groupby('receiver_id')['amount'].sum().to_dict()
         vol_out_map = self.df.groupby('sender_id')['amount'].sum().to_dict()
+        cnt_in_map  = self.df.groupby('receiver_id').size().to_dict()
+        cnt_out_map = self.df.groupby('sender_id').size().to_dict()
+        uniq_in_map = self.df.groupby('receiver_id')['sender_id'].nunique().to_dict()
+        uniq_out_map = self.df.groupby('sender_id')['receiver_id'].nunique().to_dict()
+
+        features = []
         for n in nodes:
-            features.append([self.G.in_degree(n), self.G.out_degree(n), float(vol_in_map.get(n, 0)), float(vol_out_map.get(n, 0))])
-            
-        feature_df = pd.DataFrame(features, columns=['in_degree', 'out_degree', 'vol_in', 'vol_out'], index=nodes)
+            in_d, out_d = self.G.in_degree(n), self.G.out_degree(n)
+            v_in, v_out = float(vol_in_map.get(n, 0)), float(vol_out_map.get(n, 0))
+            c_in, c_out = float(cnt_in_map.get(n, 0)), float(cnt_out_map.get(n, 0))
+            u_in, u_out = float(uniq_in_map.get(n, 0)), float(uniq_out_map.get(n, 0))
+            total_vol = v_in + v_out
+            balance_ratio = abs(v_in - v_out) / total_vol if total_vol > 0 else 0
+            out_div = u_out / c_out if c_out > 0 else 0
+            in_div  = u_in / c_in if c_in > 0 else 0
+            features.append([
+                in_d, out_d, v_in, v_out, c_in, c_out,
+                u_in, u_out, balance_ratio, out_div, in_div,
+                v_in / (v_out + 1)
+            ])
+        feature_df = pd.DataFrame(features, columns=[
+            'in_degree', 'out_degree', 'vol_in', 'vol_out',
+            'cnt_in', 'cnt_out', 'uniq_in', 'uniq_out',
+            'balance_ratio', 'out_div', 'in_div', 'vol_ratio'
+        ], index=nodes)
         iso = IsolationForest(contamination=0.05 if len(feature_df) >= 20 else 'auto', random_state=42)
         iso.fit(feature_df.values)
         raw_scores = iso.decision_function(feature_df.values)
@@ -1617,11 +1703,14 @@ class ForensicsEngine:
         self.four_pillar_scores = {}
         self.enforcement_verdicts = {}
         
-        STRUCTURAL_PATTERNS = {'cycle_length_3', 'cycle_length_4', 'cycle_length_5', 'shell_account', 'smurfing'}
-        
+        STRUCTURAL_PATTERNS = {
+            'cycle_length_3', 'cycle_length_4', 'cycle_length_5',
+            'shell_account', 'smurfing', 'fan_out', 'bipartite'
+        }
+
         for idx, node in enumerate(nodes):
             patterns = self.account_patterns.get(node, set())
-            
+
             # GAT Score (35%)
             gat_score = (pagerank.get(node, 0) / max_pr) * 15.0 # Increased baseline
             if 'cycle_length_3' in patterns: gat_score += 35.0
@@ -1629,7 +1718,9 @@ class ForensicsEngine:
             elif 'cycle_length_5' in patterns: gat_score += 25.0
             elif 'shell_account' in patterns: gat_score += 30.0
             elif 'smurfing' in patterns: gat_score += 25.0
-            elif 'fan_in' in patterns or 'fan_out' in patterns: gat_score += 20.0
+            elif 'fan_out' in patterns: gat_score += 15.0
+            elif 'bipartite' in patterns: gat_score += 8.0
+            elif 'fan_in' in patterns: gat_score += 8.0
             gat_score = min(35.0, gat_score)
             
             # LSTM Score (25%)
@@ -1637,7 +1728,7 @@ class ForensicsEngine:
             if node in self._immune_accounts: lstm_score *= 0.1 # Dampen for immune
             lstm_score = min(25.0, lstm_score)
             
-            # EIF Score (20%)
+            # EIF Score (20%) — 12-feature model with restored weight
             eif_score = float(eif_normalized[idx]) * 20.0
             if 'isolation_cluster' in patterns: eif_score += 15.0
             eif_score = min(20.0, eif_score)
@@ -1658,8 +1749,13 @@ class ForensicsEngine:
             if 'F6_COORDINATED_GROUP' in patterns: rules_score += 25.0
             if 'F7_OUTLIER_TXN' in patterns: rules_score += 15.0
             if 'F8_NEW_ACC_HIGH_VAL' in patterns: rules_score += 20.0
-            if 'F10_CROSS_BANK_LAYERING' in patterns: rules_score += 25.0
-            
+            if 'F9_NEW_ACC_HIGH_VELOCITY' in patterns: rules_score += 12.0
+            # F10: only score if account has at least one other pattern (prevents F10-only FPs)
+            if 'F10_RAPID_LAYERING' in patterns and len(patterns - {'F10_RAPID_LAYERING'}) > 0:
+                rules_score += 15.0
+            elif 'F10_RAPID_LAYERING' in patterns:
+                rules_score += 5.0  # small signal even alone
+
             rules_score = min(25.0, rules_score)  # Can exceed 20 to guarantee REVIEW
             
             # Combine 
@@ -1671,9 +1767,10 @@ class ForensicsEngine:
             
             # Guarantee REVIEW (40) for strong fraud patterns as per specs
             STRONG_FRAUD_PATTERNS = {
-                'cycle_length_3', 'cycle_length_4', 'cycle_length_5', 'shell_account', 'smurfing', 'threshold_breach',
-                'F1_FAST_PASSTHROUGH', 'F3_MICRO_SMURFING', 'F6_COORDINATED_GROUP', 'F2_DORMANT_BURST', 'F8_NEW_ACC_HIGH_VAL',
-                'F10_CROSS_BANK_LAYERING'
+                'cycle_length_3', 'cycle_length_4', 'cycle_length_5',
+                'shell_account', 'smurfing', 'threshold_breach',
+                'F1_FAST_PASSTHROUGH', 'F3_MICRO_SMURFING', 'F6_COORDINATED_GROUP',
+                'F2_DORMANT_BURST', 'F8_NEW_ACC_HIGH_VAL',
             }
             has_strong_fraud = bool(patterns & STRONG_FRAUD_PATTERNS)
             if has_strong_fraud and raw_score < (40.0 / mult):
@@ -1819,17 +1916,37 @@ class ForensicsEngine:
         print(f"[{time.time()-self._start_time:.2f}s] Stage 1: Detection algorithms...")
         
         # Run Vectorized RBI Rules
+        t1 = time.time()
         rbi_flags = apply_rbi_rules(self.df)
+        print(f"[{time.time()-self._start_time:.2f}s] RBI rules done ({time.time()-t1:.2f}s)")
         for acc, f_flags in rbi_flags.items():
             self.account_patterns[str(acc)].update(f_flags)
+
             
+        t1 = time.time()
         self.detect_cycles()
+        print(f"[{time.time()-self._start_time:.2f}s] Cycles done ({time.time()-t1:.2f}s)")
+
+        t1 = time.time()
         self.detect_shells()
+        print(f"[{time.time()-self._start_time:.2f}s] Shells done ({time.time()-t1:.2f}s)")
+
+        t1 = time.time()
         self.detect_velocity()
+        print(f"[{time.time()-self._start_time:.2f}s] Velocity done ({time.time()-t1:.2f}s)")
+
+        t1 = time.time()
         self._extract_smurf_candidates()
         self._score_smurf_candidates()
-        self.detect_structuring()
-        self.detect_structuring()
+        print(f"[{time.time()-self._start_time:.2f}s] Smurfing done ({time.time()-t1:.2f}s)")
+
+        t1 = time.time()
+        self.detect_structuring()  # (was called twice — fixed)
+        self.detect_fan_out()
+        self.detect_bipartite()
+        print(f"[{time.time()-self._start_time:.2f}s] Structuring+FanOut+Bipartite done ({time.time()-t1:.2f}s)")
+
+        t1 = time.time()
         self._apply_rule_thresholds()
 
         # ---- Stage 1.5: Immune Account Cleanup ----

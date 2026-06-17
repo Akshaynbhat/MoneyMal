@@ -1,7 +1,8 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useAppContext } from '../App';
+import { previewMapping } from '../services/api';
 
 /* ── Particle Network Background ── */
 function ParticleCanvas() {
@@ -78,15 +79,188 @@ function ParticleCanvas() {
     return <canvas ref={canvasRef} style={{ position: 'fixed', inset: 0, zIndex: 0 }} />;
 }
 
+/* ── Column Mapping Preview Card ── */
+function MappingPreviewCard({ mappingPreview, mappingLoading, mappingError }) {
+    if (mappingLoading) {
+        return (
+            <motion.div
+                className="glass-card mt-6 p-4"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                style={{ textAlign: 'left' }}
+            >
+                <p style={{ color: 'var(--color-accent)', fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>
+                    ◌ Analyzing column structure...
+                </p>
+            </motion.div>
+        );
+    }
+
+    if (mappingError) {
+        return (
+            <motion.div
+                className="glass-card mt-6 p-4"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                style={{ textAlign: 'left', borderColor: 'rgba(255,59,59,0.3)' }}
+            >
+                <p style={{ color: 'var(--color-risk-red)', fontSize: '0.8rem' }}>
+                    ✕ Preview failed: {mappingError}
+                </p>
+            </motion.div>
+        );
+    }
+
+    if (!mappingPreview) return null;
+
+    const { mapping, warnings, preview_rows, total_rows, total_columns } = mappingPreview;
+
+    const matchIcon = (matchType) => {
+        if (!matchType) return '✕';
+        if (matchType === 'exact') return '✓';
+        if (matchType.startsWith('alias')) return '↪';
+        if (matchType.startsWith('fuzzy')) return '≈';
+        return '?';
+    };
+
+    const matchColor = (matchType) => {
+        if (!matchType) return 'var(--color-risk-red)';
+        if (matchType === 'exact') return 'var(--color-risk-green)';
+        if (matchType.startsWith('alias')) return 'var(--color-accent)';
+        return '#f59e0b';
+    };
+
+    return (
+        <motion.div
+            className="glass-card mt-6 p-5"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            style={{ textAlign: 'left' }}
+        >
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--color-accent)', fontWeight: 700, letterSpacing: '0.08em' }}>
+                    COLUMN MAPPING PREVIEW
+                </p>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--color-text-dim)' }}>
+                    {total_rows.toLocaleString()} rows · {total_columns} cols
+                </span>
+            </div>
+
+            {/* Mapping rows */}
+            <div style={{ display: 'grid', gap: '6px', marginBottom: warnings.length > 0 ? '12px' : '0' }}>
+                {Object.entries(mapping).map(([canonical, info]) => (
+                    <div key={canonical} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ color: matchColor(info?.match_type), fontFamily: 'var(--font-mono)', fontSize: '0.8rem', minWidth: '16px' }}>
+                            {matchIcon(info?.match_type)}
+                        </span>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--color-text-primary)', minWidth: '130px' }}>
+                            {canonical}
+                        </span>
+                        {info ? (
+                            <>
+                                <span style={{ color: 'var(--color-text-dim)', fontSize: '0.7rem' }}>←</span>
+                                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: info.match_type === 'exact' ? 'var(--color-risk-green)' : 'var(--color-accent)' }}>
+                                    {info.original_column}
+                                </span>
+                                <span style={{ fontSize: '0.65rem', color: 'var(--color-text-dim)', marginLeft: '4px' }}>
+                                    ({info.match_type})
+                                </span>
+                            </>
+                        ) : (
+                            <span style={{ fontSize: '0.72rem', color: 'var(--color-risk-red)' }}>
+                                not found
+                            </span>
+                        )}
+                    </div>
+                ))}
+            </div>
+
+            {/* Warnings */}
+            {warnings.length > 0 && (
+                <div style={{ marginTop: '10px', padding: '8px 10px', borderRadius: '6px', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)' }}>
+                    {warnings.map((w, i) => (
+                        <p key={i} style={{ color: '#f59e0b', fontSize: '0.72rem', fontFamily: 'var(--font-mono)', marginBottom: i < warnings.length - 1 ? '4px' : 0 }}>
+                            ⚠ {w}
+                        </p>
+                    ))}
+                </div>
+            )}
+
+            {/* Preview table */}
+            {preview_rows && preview_rows.length > 0 && (
+                <div style={{ marginTop: '14px' }}>
+                    <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--color-text-dim)', marginBottom: '6px', letterSpacing: '0.05em' }}>
+                        FIRST {preview_rows.length} ROWS (MAPPED)
+                    </p>
+                    <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.65rem', fontFamily: 'var(--font-mono)' }}>
+                            <thead>
+                                <tr>
+                                    {Object.keys(preview_rows[0]).map((col) => (
+                                        <th key={col} style={{
+                                            padding: '4px 8px',
+                                            textAlign: 'left',
+                                            color: 'var(--color-accent)',
+                                            borderBottom: '1px solid rgba(0,245,255,0.15)',
+                                            whiteSpace: 'nowrap',
+                                        }}>
+                                            {col}
+                                        </th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {preview_rows.map((row, i) => (
+                                    <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                        {Object.values(row).map((val, j) => (
+                                            <td key={j} style={{
+                                                padding: '4px 8px',
+                                                color: 'var(--color-text-secondary)',
+                                                whiteSpace: 'nowrap',
+                                                maxWidth: '160px',
+                                                overflow: 'hidden',
+                                                textOverflow: 'ellipsis',
+                                            }}>
+                                                {String(val)}
+                                            </td>
+                                        ))}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+        </motion.div>
+    );
+}
+
 export default function LandingPage() {
     const { file, setFile, analyze, loading, error, progress, showToast } = useAppContext();
     const navigate = useNavigate();
     const [dragOver, setDragOver] = useState(false);
+    const [mappingPreview, setMappingPreview] = useState(null);
+    const [mappingLoading, setMappingLoading] = useState(false);
+    const [mappingError, setMappingError] = useState(null);
 
-    const handleFile = useCallback((f) => {
+    const handleFile = useCallback(async (f) => {
         if (f && f.name.endsWith('.csv')) {
             setFile(f);
             showToast(`Loaded: ${f.name} (${(f.size / 1024).toFixed(0)} KB)`, 'success');
+
+            // Trigger column mapping preview
+            setMappingLoading(true);
+            setMappingPreview(null);
+            setMappingError(null);
+            try {
+                const result = await previewMapping(f);
+                setMappingPreview(result);
+            } catch (err) {
+                setMappingError(err?.response?.data?.detail || err.message || 'Preview failed');
+            } finally {
+                setMappingLoading(false);
+            }
         } else {
             showToast('Please upload a CSV file', 'error');
         }
@@ -98,6 +272,9 @@ export default function LandingPage() {
         navigate('/dashboard');
     }, [file, analyze, navigate]);
 
+    // Determine if user can proceed: require all mandatory columns to be mapped
+    const hasRequiredCols = mappingPreview ? (mappingPreview.warnings?.length === 0) : true;
+
     return (
         <div className="relative min-h-screen flex items-center justify-center overflow-hidden">
             <ParticleCanvas />
@@ -105,6 +282,7 @@ export default function LandingPage() {
 
             <motion.div
                 className="relative z-10 text-center max-w-2xl mx-auto px-6"
+                style={{ width: '100%' }}
                 initial={{ opacity: 0, y: 30 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.8, ease: 'easeOut' }}
@@ -168,6 +346,17 @@ export default function LandingPage() {
                         )}
                     </div>
 
+                    {/* Column Mapping Preview */}
+                    <AnimatePresence>
+                        {(mappingLoading || mappingPreview || mappingError) && (
+                            <MappingPreviewCard
+                                mappingPreview={mappingPreview}
+                                mappingLoading={mappingLoading}
+                                mappingError={mappingError}
+                            />
+                        )}
+                    </AnimatePresence>
+
                     {/* Progress Bar */}
                     {loading && (
                         <motion.div
@@ -195,14 +384,49 @@ export default function LandingPage() {
                         </motion.div>
                     )}
 
+                    {/* Column mapping verification feedback */}
+                    {mappingPreview && !loading && (
+                        hasRequiredCols ? (
+                            <motion.div
+                                className="mt-3 glass-card p-3"
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                style={{ borderColor: 'rgba(34, 197, 94, 0.3)', textAlign: 'left' }}
+                            >
+                                <span style={{ color: 'var(--color-risk-green)', fontSize: '0.75rem', fontFamily: 'var(--font-mono)' }}>
+                                    ✓ All required columns mapped — ready to analyze
+                                </span>
+                            </motion.div>
+                        ) : (
+                            <motion.div
+                                className="mt-3 glass-card p-4"
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                style={{ borderColor: 'rgba(239, 68, 68, 0.4)', textAlign: 'left', background: 'rgba(239, 68, 68, 0.05)' }}
+                            >
+                                <div style={{ color: 'var(--color-risk-red)', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '8px' }}>
+                                    ✕ Missing required columns
+                                </div>
+                                <div style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', marginBottom: '8px' }}>
+                                    {mappingPreview.warnings.map((w, idx) => (
+                                        <p key={idx} style={{ margin: '2px 0' }}>• {w}</p>
+                                    ))}
+                                </div>
+                                <div style={{ fontSize: '0.7rem', color: 'var(--color-text-dim)', fontFamily: 'var(--font-mono)' }}>
+                                    Available columns in file: {mappingPreview.available_columns ? mappingPreview.available_columns.join(', ') : 'none'}
+                                </div>
+                            </motion.div>
+                        )
+                    )}
+
                     <motion.button
                         className="btn-glow mt-8"
-                        disabled={!file || loading}
+                        disabled={!file || loading || mappingLoading || !hasRequiredCols}
                         onClick={handleAnalyze}
                         whileHover={{ scale: 1.03 }}
                         whileTap={{ scale: 0.98 }}
                     >
-                        {loading ? '◌ ANALYZING...' : '▶ LAUNCH ANALYSIS'}
+                        {loading ? '◌ ANALYZING...' : mappingLoading ? '◌ PREVIEWING...' : '▶ LAUNCH ANALYSIS'}
                     </motion.button>
                 </motion.div>
 

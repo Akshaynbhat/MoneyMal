@@ -36,9 +36,9 @@ def start_server(port: int):
     print(f"\n🚀 Starting Hybrid Sentinel on http://localhost:{port}")
     print(f"   Upload CSV at the homepage to begin analysis\n")
     subprocess.run(
-        [sys.executable, "-m", "uvicorn", "main:app",
+        [sys.executable, "-m", "uvicorn", "backend.main:app",
          "--host", "0.0.0.0", "--port", str(port), "--reload"],
-        cwd=BACKEND,
+        cwd=ROOT,
     )
 
 

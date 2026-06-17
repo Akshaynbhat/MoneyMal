@@ -70,3 +70,22 @@ export async function checkHealth() {
     const res = await API.get('/health');
     return res.data;
 }
+
+/**
+ * previewMapping — Column Mapping Preview (pre-upload step)
+ * POSTs the selected file to /api/preview_mapping and returns
+ * the mapping result (without running the full analysis).
+ */
+export async function previewMapping(file) {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await API.post('/preview_mapping', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return res.data;
+}
+
+export async function getAccountDetail(accountId) {
+    const res = await API.get(`/account/${accountId}`);
+    return res.data;
+}

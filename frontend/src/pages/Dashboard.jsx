@@ -26,7 +26,7 @@ const stagger = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } }
 const fadeUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.5 } } };
 
 export default function Dashboard() {
-    const { result, graphData } = useAppContext();
+    const { result, graphData, setSelectedNode } = useAppContext();
     const navigate = useNavigate();
     const s = result?.summary;
 
@@ -181,7 +181,17 @@ export default function Dashboard() {
                         <tbody>
                             {(result.suspicious_accounts || []).slice(0, 8).map((a) => (
                                 <tr key={a.account_id}>
-                                    <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: '0.75rem' }}>{a.account_id}</td>
+                                    <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: '0.75rem' }}>
+                                        <span
+                                            style={{ color: 'var(--color-accent)', cursor: 'pointer', textDecoration: 'underline' }}
+                                            onClick={() => {
+                                                setSelectedNode(a.account_id);
+                                                navigate('/graph');
+                                            }}
+                                        >
+                                            {a.account_id}
+                                        </span>
+                                    </td>
                                     <td>
                                         <span className={`badge ${a.suspicion_score > 70 ? 'badge-high' : a.suspicion_score > 30 ? 'badge-medium' : 'badge-low'}`}>
                                             {a.suspicion_score}

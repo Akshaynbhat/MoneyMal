@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { useAppContext } from '../App';
 import NetworkGraph from '../components/NetworkGraph';
-import NodeDetailPanel from '../components/NodeDetailPanel';
+import NodeInspector from '../components/NodeInspector';
 
 export default function GraphPage() {
     const { result, graphData, setSelectedNode, selectedNode } = useAppContext();
@@ -146,7 +146,12 @@ export default function GraphPage() {
             {/* Node Detail Side Panel */}
             <AnimatePresence>
                 {selectedNode && (
-                    <NodeDetailPanel node={selectedNode} onClose={() => setSelectedNode(null)} />
+                    <NodeInspector
+                        accountId={selectedNode.id || selectedNode}
+                        onClose={() => setSelectedNode(null)}
+                        onSelectAccount={(id) => setSelectedNode(id)}
+                        result={result}
+                    />
                 )}
             </AnimatePresence>
         </div>
