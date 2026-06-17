@@ -10,10 +10,6 @@
 ![Architecture](https://img.shields.io/badge/Architecture-Async_Job_Queue-9cf)
 ![Accuracy](https://img.shields.io/badge/F1_Score-50.7%25_(IBM_AMLSim)-brightgreen)
 
-🔗 **Deployment link**
-https://money-mal-nxch.vercel.app/
-
----
 
 ## 📋 Table of Contents
 
