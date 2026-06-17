@@ -5,6 +5,7 @@ const links = [
     { to: '/graph', label: 'Network Graph', icon: '⬡' },
     { to: '/transactions', label: 'Transactions', icon: '▤' },
     { to: '/risk', label: 'Risk Analysis', icon: '◉' },
+    { to: '/live', label: 'Live Tracking', icon: '⚡' },
 ];
 
 export default function Navbar() {

@@ -419,15 +419,27 @@ export default function LandingPage() {
                         )
                     )}
 
-                    <motion.button
-                        className="btn-glow mt-8"
-                        disabled={!file || loading || mappingLoading || !hasRequiredCols}
-                        onClick={handleAnalyze}
-                        whileHover={{ scale: 1.03 }}
-                        whileTap={{ scale: 0.98 }}
-                    >
-                        {loading ? '◌ ANALYZING...' : mappingLoading ? '◌ PREVIEWING...' : '▶ LAUNCH ANALYSIS'}
-                    </motion.button>
+                    <div className="flex gap-4 justify-center mt-8">
+                        <motion.button
+                            className="btn-glow"
+                            disabled={!file || loading || mappingLoading || !hasRequiredCols}
+                            onClick={handleAnalyze}
+                            whileHover={{ scale: 1.03 }}
+                            whileTap={{ scale: 0.98 }}
+                            style={{ margin: 0 }}
+                        >
+                            {loading ? '◌ ANALYZING...' : mappingLoading ? '◌ PREVIEWING...' : '▶ LAUNCH ANALYSIS'}
+                        </motion.button>
+                        <motion.button
+                            className="btn-secondary"
+                            onClick={() => navigate('/live')}
+                            whileHover={{ scale: 1.03 }}
+                            whileTap={{ scale: 0.98 }}
+                            style={{ padding: '12px 24px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}
+                        >
+                            ⚡ LIVE SIMULATOR
+                        </motion.button>
+                    </div>
                 </motion.div>
 
                 {/* Bottom info */}

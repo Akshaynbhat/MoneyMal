@@ -35,10 +35,16 @@ def start_server(port: int):
     """Start the FastAPI server."""
     print(f"\n🚀 Starting Hybrid Sentinel on http://localhost:{port}")
     print(f"   Upload CSV at the homepage to begin analysis\n")
+    
+    # Inject PYTHONPATH to resolve backend imports
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.path.abspath(os.path.join(BACKEND, ".."))
+    
     subprocess.run(
-        [sys.executable, "-m", "uvicorn", "backend.main:app",
+        [sys.executable, "-m", "uvicorn", "main:app",
          "--host", "0.0.0.0", "--port", str(port), "--reload"],
-        cwd=ROOT,
+        cwd=BACKEND,
+        env=env,
     )
 
 

@@ -1,5 +1,5 @@
 import { useState, createContext, useContext } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
 import useAnalysis from './hooks/useAnalysis';
 import Navbar from './components/Navbar';
 import LandingPage from './pages/LandingPage';
@@ -7,12 +7,20 @@ import Dashboard from './pages/Dashboard';
 import GraphPage from './pages/GraphPage';
 import TransactionsPage from './pages/TransactionsPage';
 import RiskAnalysisPage from './pages/RiskAnalysisPage';
+import LiveTrackingPage from './pages/LiveTrackingPage';
 import Toast from './components/Toast';
 
 export const AppContext = createContext(null);
 
 export function useAppContext() {
   return useContext(AppContext);
+}
+
+function AppNavbar() {
+  const { pathname } = useLocation();
+  const { result } = useAppContext();
+  if (pathname === '/' && !result) return null;
+  return <Navbar />;
 }
 
 export default function App() {
@@ -38,13 +46,14 @@ export default function App() {
   return (
     <AppContext.Provider value={ctx}>
       <BrowserRouter>
-        {analysis.result && <Navbar />}
+        <AppNavbar />
         <Routes>
           <Route path="/" element={analysis.result ? <Dashboard /> : <LandingPage />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/graph" element={<GraphPage />} />
           <Route path="/transactions" element={<TransactionsPage />} />
           <Route path="/risk" element={<RiskAnalysisPage />} />
+          <Route path="/live" element={<LiveTrackingPage />} />
         </Routes>
         {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
       </BrowserRouter>
