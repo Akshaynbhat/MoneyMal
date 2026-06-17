@@ -356,31 +356,6 @@ To reproduce this benchmark yourself, run the verification script in `backend/va
 
 ---
 
-## Changelog
-
-**Async architecture & timeout removal**
-- Replaced synchronous request/response with a submit-job → poll-status pattern; large files no longer fail with `timeout of 120000ms exceeded`.
-
-**Performance fixes**
-- Removed multiple `O(N²)` `iterrows()` loops across cycle, structuring, and account-type filtering logic in favor of vectorized pandas/groupby operations.
-- Added a size guard so PageRank automatically falls back to degree centrality above 8,000 graph nodes.
-
-**Detection accuracy improvements**
-- Added `detect_fan_out()` and `detect_bipartite()` as new pattern detectors (previously only cycles, shells, smurfing, and structuring were covered).
-- Reworked the RBI rule engine to use adaptive, percentile-based thresholds scaled to each dataset's own statistics instead of fixed absolute values.
-- Fixed an F10 rule that only worked on one specific account-naming convention; generalized it to a counterparty-diversity signal that works on any ID format.
-- Added F9 (new account, high transaction count) to complement F8 (new account, high transaction value).
-- Fixed a ring-risk-inheritance bug where individual account scores were fully decoupled from their fraud ring's risk score, causing 90%+ risk rings to show every member as APPROVE.
-
-**Column mapping**
-- Added a dedicated `data_ingestion.py` fuzzy-matching layer with exact, normalized, alias, and fuzzy-similarity matching tiers.
-- Added a `/api/preview_mapping` endpoint and frontend preview UI so column mismatches are caught before a full analysis run, with the file's actual columns surfaced in any error message.
-
-**UI / UX**
-- Added the 5-tab Node Inspector panel (Overview, Transactions, Ring, Connected Accounts, ML Scores) accessible by clicking any account or graph node.
-- Fixed dashboard counters (HIGH RISK MULES, MANDATORY BLOCK, MANUAL REVIEW) that were reading the wrong score thresholds and showing 0 despite real fraud rings being detected.
-
----
 
 ## Team Members
 
