@@ -3,6 +3,7 @@ import { Network } from 'vis-network';
 import { DataSet } from 'vis-data';
 import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
+import { API_BASE } from '../services/api';
 import { Icon, PageHead, EmptyState } from '../components/ui';
 
 // Mappings for pretty alert names
@@ -177,7 +178,7 @@ export default function LiveTrackingPage() {
             form.append('file', blob, 'stream_data.csv');
 
             // Send to FastAPI
-            const res = await axios.post('http://localhost:8000/api/analyze', form, {
+            const res = await axios.post(`${API_BASE}/analyze`, form, {
                 headers: { 'Content-Type': 'multipart/form-data' }
             });
             const jobId = res.data.job_id;
@@ -186,7 +187,7 @@ export default function LiveTrackingPage() {
             let completed = false;
             while (!completed) {
                 await new Promise(r => setTimeout(r, 1000));
-                const pollRes = await axios.get(`http://localhost:8000/api/result/${jobId}`);
+                const pollRes = await axios.get(`${API_BASE}/result/${jobId}`);
                 if (pollRes.data.status === 'done') {
                     completed = true;
                     handleAnalysisResult(pollRes.data.result);
