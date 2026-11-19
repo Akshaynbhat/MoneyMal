@@ -1,28 +1,23 @@
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
+import { Icon } from './ui';
+
+const ICON = { success: 'check', error: 'alert', info: 'info' };
 
 export default function Toast({ message, type = 'info', onClose }) {
     return (
-        <AnimatePresence>
-            <motion.div
-                className={`toast toast-${type}`}
-                initial={{ opacity: 0, y: 40, x: 0 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 40 }}
-                transition={{ duration: 0.3 }}
-            >
-                <div className="flex items-center gap-3">
-                    <span style={{ fontSize: '1.1rem' }}>
-                        {type === 'success' ? '✓' : type === 'error' ? '✕' : 'ℹ'}
-                    </span>
-                    <span style={{ fontSize: '0.8rem', color: 'var(--color-text-primary)' }}>{message}</span>
-                    <button
-                        onClick={onClose}
-                        style={{ marginLeft: 'auto', color: 'var(--color-text-dim)', cursor: 'pointer', background: 'none', border: 'none', fontSize: '1rem' }}
-                    >
-                        ×
-                    </button>
-                </div>
-            </motion.div>
-        </AnimatePresence>
+        <motion.div
+            className={`toast toast-${type}`}
+            role={type === 'error' ? 'alert' : 'status'}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            transition={{ duration: 0.22, ease: [0.2, 0.7, 0.2, 1] }}
+        >
+            <Icon name={ICON[type] || 'info'} size={16} className="toast-ico" />
+            <span style={{ flex: 1, lineHeight: 1.45 }}>{message}</span>
+            <button className="btn btn-ghost btn-sm btn-icon" onClick={onClose} aria-label="Dismiss">
+                <Icon name="x" size={14} />
+            </button>
+        </motion.div>
     );
 }

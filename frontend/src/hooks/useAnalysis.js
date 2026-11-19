@@ -8,8 +8,10 @@ export default function useAnalysis() {
     const [error, setError] = useState(null);
     const [progress, setProgress] = useState(0);
 
+    // Resolves true on success so the caller can decide where to navigate.
     const analyze = useCallback(async (file) => {
-        if (!file) return;
+        if (!file) return false;
+        let ok = false;
         setLoading(true);
         setError(null);
         setResult(null);
@@ -23,6 +25,7 @@ export default function useAnalysis() {
             setResult(data.result);
             setGraphData(data.graph);
             setProgress(100);
+            ok = true;
         } catch (e) {
             const msg = e.response?.data?.detail || e.message || 'Analysis failed';
             setError(msg);
@@ -30,6 +33,7 @@ export default function useAnalysis() {
             setLoading(false);
             setTimeout(() => setProgress(0), 500);
         }
+        return ok;
     }, []);
 
     const reset = useCallback(() => {
