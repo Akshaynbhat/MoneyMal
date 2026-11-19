@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo, useRef } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { useAppContext } from '../App';
-import NetworkGraph, { GRAPH_COLORS } from '../components/NetworkGraph';
+import NetworkGraph, { GRAPH_COLORS, ROLE_PALETTE } from '../components/NetworkGraph';
 import NodeInspector from '../components/NodeInspector';
 import { Icon, PageHead, EmptyState } from '../components/ui';
 import { formatNum } from '../lib/format';
@@ -13,20 +13,20 @@ const FILTERS = [
     { key: 'low', label: 'Low' },
 ];
 
-function Shape({ kind, color = '#8b877e', ring }) {
-    const stroke = ring ? GRAPH_COLORS.ring : 'none';
-    const sw = ring ? 1.6 : 0;
+function Dot({ color = '#8b877e', r = 4.5, stroke, sw = 0, size = 14 }) {
     return (
-        <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-            {kind === 'dot' && <circle cx="7" cy="7" r="4.5" fill={color} stroke={stroke} strokeWidth={sw} />}
-            {kind === 'diamond' && <path d="M7 1.8 12.2 7 7 12.2 1.8 7Z" fill={color} />}
-            {kind === 'square' && <rect x="2.8" y="2.8" width="8.4" height="8.4" fill={color} />}
-            {kind === 'triangle' && <path d="M7 2 12.4 11.6H1.6Z" fill={color} />}
-            {kind === 'ring' && <circle cx="7" cy="7" r="4.6" fill="none" stroke={GRAPH_COLORS.ring} strokeWidth="1.6" />}
-            {kind === 'edge' && <path d="M1 7h12" stroke={color} strokeWidth="1.6" />}
+        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+            <circle cx={size / 2} cy={size / 2} r={r} fill={color} stroke={stroke || 'none'} strokeWidth={sw} />
         </svg>
     );
 }
+
+const ROLE_ROWS = [
+    ['HUB', 'Hub', 'Central aggregator'],
+    ['BRIDGE', 'Bridge', 'Cross-network relay'],
+    ['MULE', 'Mule', 'Forwarder'],
+    ['LEAF', 'Leaf', 'Entry / exit point'],
+];
 
 function Legend({ open, onToggle }) {
     return (
@@ -37,18 +37,27 @@ function Legend({ open, onToggle }) {
             </button>
             {open && (
                 <div style={{ marginTop: 8 }}>
-                    <div className="legend-row"><span className="legend-sw"><Shape kind="dot" color={GRAPH_COLORS.crit.bg} /></span>High risk · score &gt; 70</div>
-                    <div className="legend-row"><span className="legend-sw"><Shape kind="dot" color={GRAPH_COLORS.warn.bg} /></span>Elevated · 30–70</div>
-                    <div className="legend-row"><span className="legend-sw"><Shape kind="dot" color={GRAPH_COLORS.low.bg} /></span>Low / unflagged</div>
+                    <div className="label" style={{ fontSize: '0.6rem', margin: '2px 0 4px' }}>Structural role</div>
+                    {ROLE_ROWS.map(([k, name, d]) => (
+                        <div key={k} className="legend-row">
+                            <span className="legend-sw"><Dot color={ROLE_PALETTE[k].bg} /></span>
+                            <span style={{ color: 'var(--ink)' }}>{name}</span>
+                            <span style={{ color: 'var(--ink-4)', marginLeft: 'auto', paddingLeft: 10 }}>{d}</span>
+                        </div>
+                    ))}
                     <div style={{ height: 1, background: 'var(--line)', margin: '8px 0' }} />
-                    <div className="legend-row"><span className="legend-sw"><Shape kind="diamond" /></span>Hub</div>
-                    <div className="legend-row"><span className="legend-sw"><Shape kind="square" /></span>Bridge</div>
-                    <div className="legend-row"><span className="legend-sw"><Shape kind="triangle" /></span>Mule</div>
-                    <div className="legend-row"><span className="legend-sw"><Shape kind="dot" /></span>Leaf</div>
+                    <div className="label" style={{ fontSize: '0.6rem', margin: '2px 0 4px' }}>Risk</div>
+                    <div className="legend-row">
+                        <span className="flex items-end gap-1" style={{ width: 44 }}>
+                            <Dot r={2.5} size={8} color="#8b877e" /><Dot r={4} size={11} color="#8b877e" /><Dot r={6} size={14} color="#8b877e" />
+                        </span>
+                        Size grows with score
+                    </div>
+                    <div className="legend-row"><span className="legend-sw"><Dot r={4.6} color="#5f5c55" stroke={GRAPH_COLORS.highRisk} sw={2} /></span>High risk · score &gt; 70</div>
+                    <div className="legend-row"><span className="legend-sw"><Dot r={4.6} color="#5f5c55" stroke={GRAPH_COLORS.ring} sw={1.6} /></span>Fraud-ring member</div>
                     <div style={{ height: 1, background: 'var(--line)', margin: '8px 0' }} />
-                    <div className="legend-row"><span className="legend-sw"><Shape kind="ring" /></span>Ring member</div>
-                    <div className="legend-row"><span className="legend-sw"><Shape kind="edge" color="rgba(207,113,102,0.8)" /></span>Intra-ring flow</div>
-                    <div className="legend-row"><span className="legend-sw"><Shape kind="edge" color="rgba(236,231,220,0.35)" /></span>Transfer</div>
+                    <div className="legend-row"><span className="legend-sw"><svg width="14" height="14"><path d="M1 7h12" stroke={GRAPH_COLORS.edgeRing} strokeWidth="1.8" /></svg></span>Intra-ring flow</div>
+                    <div className="legend-row"><span className="legend-sw"><svg width="14" height="14"><path d="M1 7h12" stroke="rgba(120,170,225,0.6)" strokeWidth="1.6" /></svg></span>Transfer</div>
                 </div>
             )}
         </div>

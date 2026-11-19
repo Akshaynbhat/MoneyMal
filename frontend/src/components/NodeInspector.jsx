@@ -338,7 +338,7 @@ export default function NodeInspector({ accountId, onClose, onSelectAccount, res
                                             </thead>
                                             <tbody>
                                                 {sortedTransactions.map((tx) => (
-                                                    <tr key={tx.transaction_id} style={tx.is_ring_transaction ? { background: 'rgba(207,113,102,0.05)' } : undefined}>
+                                                    <tr key={tx.transaction_id} style={tx.is_ring_transaction ? { background: 'rgba(232,103,92,0.05)' } : undefined}>
                                                         <td style={{ paddingLeft: 14 }}>
                                                             <span className="mono dim" style={{ fontSize: '0.72rem' }} title={tx.transaction_id}>…{tx.transaction_id.slice(-6)}</span>
                                                         </td>

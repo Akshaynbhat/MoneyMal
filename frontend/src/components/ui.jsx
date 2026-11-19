@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react';
+
 /* Shared presentational primitives for the MoneyMal interface.
    Pure UI — no data fetching, no business logic. */
 
@@ -70,8 +72,30 @@ export function Verdict({ value }) {
     return <span className={`tag tag-dot ${VERDICT[v] || 'muted'}`}>{v}</span>;
 }
 
+export const ROLE_COLORS = { HUB: '#a27fe0', BRIDGE: '#ec8a4c', MULE: '#ecc556', LEAF: '#5c9fe0' };
+
 export function Role({ value }) {
-    return <span className="tag muted">{value || 'LEAF'}</span>;
+    const v = value || 'LEAF';
+    return <span className={`tag tag-dot ${ROLE_COLORS[v] ? `role-${v}` : 'muted'}`}>{v}</span>;
+}
+
+/* Count-up for headline figures (restored from the original dashboard). */
+export function AnimatedNumber({ value, duration = 1100, decimals = 0 }) {
+    const target = typeof value === 'number' ? value : parseFloat(value) || 0;
+    const [display, setDisplay] = useState(0);
+    useEffect(() => {
+        let raf;
+        const start = performance.now();
+        const step = (now) => {
+            const p = Math.min((now - start) / duration, 1);
+            const eased = 1 - Math.pow(1 - p, 3);
+            setDisplay(eased * target);
+            if (p < 1) raf = requestAnimationFrame(step);
+        };
+        raf = requestAnimationFrame(step);
+        return () => cancelAnimationFrame(raf);
+    }, [target, duration]);
+    return <>{decimals ? display.toFixed(decimals) : Math.round(display).toLocaleString('en-IN')}</>;
 }
 
 export function EmptyState({ icon = 'info', title, children, action }) {

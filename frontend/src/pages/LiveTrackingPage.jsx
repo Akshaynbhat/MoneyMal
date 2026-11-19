@@ -126,16 +126,16 @@ export default function LiveTrackingPage() {
             nodes: {
                 shape: 'dot',
                 color: {
-                    background: '#5f5c55',
-                    border: '#4a4843',
-                    highlight: { background: '#5f5c55', border: '#bccbb2' },
-                    hover: { background: '#5f5c55', border: '#ece7dc' },
+                    background: '#5c9fe0',
+                    border: '#4686c6',
+                    highlight: { background: '#5c9fe0', border: '#bccbb2' },
+                    hover: { background: '#5c9fe0', border: '#ece7dc' },
                 },
                 size: 8,
                 font: { size: 10, color: '#8b877e', face: 'IBM Plex Mono, monospace', strokeWidth: 3, strokeColor: '#141412' },
             },
             edges: {
-                color: { color: 'rgba(236,231,220,0.14)', highlight: 'rgba(188,203,178,0.9)', hover: 'rgba(236,231,220,0.4)' },
+                color: { color: 'rgba(120,170,225,0.24)', highlight: 'rgba(188,203,178,0.9)', hover: 'rgba(236,231,220,0.4)' },
                 arrows: { to: { enabled: true, scaleFactor: 0.45 } },
                 smooth: { type: 'curvedCW', roundness: 0.15 },
             },
@@ -215,11 +215,11 @@ export default function LiveTrackingPage() {
 
             // Update Vis.js Node color and size dynamically
             if (nodesRef.current.get(accId)) {
-                const color = score > 70 ? '#cf7166' : score > 30 ? '#d3a45c' : '#5f5c55';
+                const color = score > 70 ? '#e8675c' : score > 30 ? '#e6a94f' : '#5c9fe0';
                 const size = score > 70 ? 15 : score > 30 ? 11 : 8;
                 nodesRef.current.update({
                     id: accId,
-                    color: { background: color, border: score > 30 ? '#ece7dc' : '#4a4843', highlight: { background: color, border: '#bccbb2' } },
+                    color: { background: color, border: score > 30 ? '#ece7dc' : '#4686c6', highlight: { background: color, border: '#bccbb2' } },
                     font: { color: score > 30 ? '#ece7dc' : '#8b877e' },
                     size: size
                 });

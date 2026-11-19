@@ -19,8 +19,8 @@ export default function MiniGraph({ data }) {
             nodeSubset.map((n) => ({
                 id: n.id,
                 color: {
-                    background: n.suspicion_score > 70 ? '#cf7166' : n.suspicion_score > 30 ? '#d3a45c' : '#6b6860',
-                    border: n.suspicion_score > 70 ? '#cf7166' : n.suspicion_score > 30 ? '#d3a45c' : '#6b6860',
+                    background: n.suspicion_score > 70 ? '#e8675c' : n.suspicion_score > 30 ? '#e6a94f' : '#5c9fe0',
+                    border: n.suspicion_score > 70 ? '#e8675c' : n.suspicion_score > 30 ? '#e6a94f' : '#5c9fe0',
                 },
                 size: n.suspicion_score > 70 ? 7 : n.suspicion_score > 30 ? 5 : 3.5,
                 borderWidth: 1,
@@ -33,7 +33,7 @@ export default function MiniGraph({ data }) {
                 id: `e-${i}`,
                 from: e.from,
                 to: e.to,
-                color: { color: 'rgba(236, 231, 220, 0.10)' },
+                color: { color: 'rgba(120,170,225,0.16)' },
                 width: 0.3,
                 arrows: { to: { enabled: false } },
             }))

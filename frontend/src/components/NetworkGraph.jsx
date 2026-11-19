@@ -2,23 +2,26 @@ import { useEffect, useRef, useState } from 'react';
 import { Network } from 'vis-network';
 import { DataSet } from 'vis-data';
 
-/* ─── Visual encoding ───────────────────────────────────────────────────────
-   Colour  = risk tier (score > 70 critical, > 30 elevated, else neutral)
-   Shape   = structural role (HUB ◆, BRIDGE ■, MULE ▲, LEAF ●)
-   Border  = ivory ring when the account belongs to a detected fraud ring
+/* ─── Visual encoding (matches the README's Structural Roles table) ──────────
+   Colour  = structural role: HUB purple, BRIDGE orange, MULE yellow, LEAF blue
+   Size    = risk tier (score > 70 large, > 30 medium, else small)
+   Outline = red for high-risk accounts (score > 70), ivory for ring members
    Sage    = current selection                                               */
-export const GRAPH_COLORS = {
-    crit: { bg: '#cf7166', border: '#b85d53' },
-    warn: { bg: '#d3a45c', border: '#b98b45' },
-    low: { bg: '#5f5c55', border: '#4a4843' },
-    ring: '#ece7dc',
-    select: '#bccbb2',
-    edge: 'rgba(236,231,220,0.13)',
-    edgeRing: 'rgba(207,113,102,0.5)',
-    edgeHi: 'rgba(188,203,178,0.75)',
+export const ROLE_PALETTE = {
+    HUB: { bg: '#a27fe0', border: '#8a66cc' },
+    BRIDGE: { bg: '#ec8a4c', border: '#d27236' },
+    MULE: { bg: '#ecc556', border: '#d4ac3e' },
+    LEAF: { bg: '#5c9fe0', border: '#4686c6' },
 };
-
-export const ROLE_SHAPES = { HUB: 'diamond', BRIDGE: 'square', MULE: 'triangle', LEAF: 'dot' };
+export const GRAPH_COLORS = {
+    highRisk: '#ff5a4e',
+    ring: '#f3efe6',
+    select: '#c9dcbc',
+    edge: 'rgba(120,170,225,0.22)',
+    edgeRing: 'rgba(255,110,96,0.55)',
+    edgeHi: 'rgba(201,220,188,0.85)',
+};
+const roleColor = (r) => ROLE_PALETTE[r] || ROLE_PALETTE.LEAF;
 
 const tier = (s) => (s > 70 ? 'crit' : s > 30 ? 'warn' : 'low');
 const inr = (v) => (v != null ? '₹' + Number(v).toLocaleString('en-IN') : '–');
@@ -45,7 +48,8 @@ function buildTooltip(n) {
 
     const h = add(el, 'div', 'gtip-h');
     add(h, 'span', 'gtip-id', String(n.id));
-    add(h, 'span', 'gtip-role', n.structural_role || 'LEAF');
+    const roleEl = add(h, 'span', 'gtip-role', n.structural_role || 'LEAF');
+    roleEl.style.color = roleColor(n.structural_role).bg;
 
     const t = tier(n.suspicion_score);
     const tone = t === 'crit' ? 'var(--crit)' : t === 'warn' ? 'var(--warn)' : 'var(--ink-2)';
@@ -116,29 +120,29 @@ export default function NetworkGraph({ data, onNodeClick, apiRef, selectedId }) 
         const nodes = new DataSet(
             renderedNodes.map((n) => {
                 const t = tier(n.suspicion_score);
-                const c = GRAPH_COLORS[t];
+                const c = roleColor(n.structural_role || 'LEAF');
                 const inRing = (n.ring_ids || []).length > 0;
-                const role = n.structural_role || 'LEAF';
-                const shape = ROLE_SHAPES[role] || 'dot';
-                const base = t === 'crit' ? 22 : t === 'warn' ? 16 : 10;
-                const size = shape === 'dot' ? base : base * 0.85;
+                const high = t === 'crit';
+                const size = high ? 24 : t === 'warn' ? 17 : 11;
+                const border = high ? GRAPH_COLORS.highRisk : inRing ? GRAPH_COLORS.ring : c.border;
                 return {
                     id: n.id,
                     label: showAllLabels || t !== 'low' ? String(n.label || n.id) : undefined,
                     title: buildTooltip(n),
-                    shape,
+                    shape: 'dot',
                     color: {
                         background: c.bg,
-                        border: inRing ? GRAPH_COLORS.ring : c.border,
+                        border,
                         highlight: { background: c.bg, border: GRAPH_COLORS.select },
                         hover: { background: c.bg, border: GRAPH_COLORS.ring },
                     },
                     size,
-                    borderWidth: inRing ? 2.5 : 1,
-                    borderWidthSelected: 3,
+                    borderWidth: high ? 3.5 : inRing ? 2.5 : 1.5,
+                    borderWidthSelected: 4,
+                    shadow: high ? { enabled: true, color: 'rgba(255,90,78,0.35)', size: 14, x: 0, y: 0 } : { enabled: false },
                     font: {
                         size: t === 'low' ? 12 : 13,
-                        color: t === 'low' ? '#8b877e' : '#ece7dc',
+                        color: t === 'low' ? '#a9a59c' : '#f3efe6',
                         face: 'IBM Plex Mono, ui-monospace, monospace',
                         strokeWidth: 3,
                         strokeColor: '#141412',
