@@ -5,7 +5,7 @@ import { useAppContext } from '../App';
 import FraudRingTable from '../components/FraudRingTable';
 import MiniGraph from '../components/MiniGraph';
 import RiskGauge from '../components/RiskGauge';
-import { Icon, PageHead, Score, Verdict, tierOf } from '../components/ui';
+import { Icon, PageHead, Score, Verdict, Role, AnimatedNumber, tierOf } from '../components/ui';
 import { formatNum, patternLabel } from '../lib/format';
 
 const reveal = (i = 0) => ({
@@ -70,29 +70,48 @@ export default function Dashboard() {
             {/* Key figures */}
             <motion.section className="metric-strip" style={{ '--cols': 5 }} {...reveal(0)} aria-label="Key figures">
                 <div className="metric">
-                    <div className="metric-k">Accounts analysed</div>
-                    <div className="metric-v">{formatNum(s.total_accounts_analyzed)}</div>
+                    <div className="metric-k"><i className="kdot" style={{ background: 'var(--role-leaf)' }} />Total accounts</div>
+                    <div className="metric-v" style={{ color: 'var(--role-leaf)' }}><AnimatedNumber value={s.total_accounts_analyzed} /></div>
                     <div className="metric-n">Nodes in transaction graph</div>
                 </div>
                 <div className="metric">
-                    <div className="metric-k">Flagged accounts</div>
-                    <div className="metric-v">{formatNum(s.suspicious_accounts_flagged)}</div>
+                    <div className="metric-k"><i className="kdot" style={{ background: 'var(--warn)' }} />Suspicious accounts</div>
+                    <div className="metric-v" style={{ color: 'var(--warn)' }}><AnimatedNumber value={s.suspicious_accounts_flagged} /></div>
                     <div className="metric-n"><span className="mono">{flaggedPct.toFixed(1)}%</span> of all accounts</div>
                 </div>
-                <div className={`metric ${stats.highRisk > 0 ? 'crit' : ''}`}>
-                    <div className="metric-k">High-risk mules</div>
-                    <div className="metric-v">{formatNum(stats.highRisk)}</div>
+                <div className="metric">
+                    <div className="metric-k"><i className="kdot" style={{ background: 'var(--crit)' }} />High-risk mules</div>
+                    <div className="metric-v" style={{ color: 'var(--crit)' }}><AnimatedNumber value={stats.highRisk} /></div>
                     <div className="metric-n">Suspicion score above 70</div>
                 </div>
                 <div className="metric">
-                    <div className="metric-k">Fraud rings</div>
-                    <div className="metric-v">{formatNum(s.fraud_rings_detected)}</div>
-                    <div className="metric-n"><span className="mono">{formatNum(stats.totalRingMembers)}</span> member accounts</div>
+                    <div className="metric-k"><i className="kdot" style={{ background: 'var(--role-bridge)' }} />Fraud rings</div>
+                    <div className="metric-v" style={{ color: 'var(--role-bridge)' }}><AnimatedNumber value={s.fraud_rings_detected} /></div>
+                    <div className="metric-n">Coordinated groups detected</div>
                 </div>
                 <div className="metric">
-                    <div className="metric-k">Mean score</div>
-                    <div className="metric-v">{stats.avgScore}<small>/100</small></div>
+                    <div className="metric-k"><i className="kdot" style={{ background: 'var(--role-hub)' }} />Avg fraud score</div>
+                    <div className="metric-v" style={{ color: 'var(--role-hub)' }}><AnimatedNumber value={parseFloat(stats.avgScore)} decimals={1} /><small>/100</small></div>
                     <div className="metric-n">Across flagged accounts</div>
+                </div>
+            </motion.section>
+
+            <motion.section className="metric-strip mt-3" style={{ '--cols': 4, '--cols-md': 4 }} {...reveal(1)} aria-label="Ring composition">
+                <div className="metric metric-sm">
+                    <div className="metric-k">Smurf rings</div>
+                    <div className="metric-v" style={{ color: 'var(--role-mule)' }}><AnimatedNumber value={stats.ringTypes.smurfing || 0} /></div>
+                </div>
+                <div className="metric metric-sm">
+                    <div className="metric-k">Cycle rings</div>
+                    <div className="metric-v" style={{ color: 'var(--c-pink)' }}><AnimatedNumber value={stats.ringTypes.cycle || 0} /></div>
+                </div>
+                <div className="metric metric-sm">
+                    <div className="metric-k">Accounts in rings</div>
+                    <div className="metric-v" style={{ color: 'var(--c-teal)' }}><AnimatedNumber value={stats.totalRingMembers} /></div>
+                </div>
+                <div className="metric metric-sm">
+                    <div className="metric-k">Processing time</div>
+                    <div className="metric-v" style={{ color: 'var(--pos)' }}>{s.processing_time_seconds.toFixed(2)}<small>s</small></div>
                 </div>
             </motion.section>
 
@@ -113,8 +132,10 @@ export default function Dashboard() {
                                     <th>Account</th>
                                     <th>Score</th>
                                     <th>Verdict</th>
+                                    <th>Role</th>
                                     <th>Patterns</th>
                                     <th>Ring</th>
+                                    <th>Explanation</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -123,6 +144,7 @@ export default function Dashboard() {
                                         <td><button className="link-id" onClick={(e) => { e.stopPropagation(); openAccount(a.account_id); }}>{a.account_id}</button></td>
                                         <td><Score value={a.suspicion_score} tier={tierOf(a.suspicion_score)} /></td>
                                         <td><Verdict value={a.verdict} /></td>
+                                        <td><Role value={a.structural_role} /></td>
                                         <td>
                                             <div className="flex gap-1" style={{ flexWrap: 'nowrap' }}>
                                                 {a.detected_patterns.slice(0, 2).map((p) => <span key={p} className="pattern-chip" title={patternLabel(p)}>{p}</span>)}
@@ -130,6 +152,7 @@ export default function Dashboard() {
                                             </div>
                                         </td>
                                         <td className="mono dim" style={{ fontSize: '0.76rem' }}>{a.ring_id && a.ring_id !== 'NONE' ? a.ring_id : '—'}</td>
+                                        <td className="mono dim" style={{ fontSize: '0.7rem', maxWidth: 220, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={a.explanation}>{a.explanation || '—'}</td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -163,14 +186,14 @@ export default function Dashboard() {
 
                     <motion.section className="panel" {...reveal(3)}>
                         <div className="panel-head"><span className="panel-title">Threat level</span><span className="panel-meta">Mean flagged score</span></div>
-                        <div className="panel-body">
+                        <div className="panel-body" style={{ display: 'flex', justifyContent: 'center' }}>
                             <RiskGauge score={parseFloat(stats.avgScore)} />
                         </div>
                         <div style={{ padding: '0 18px 14px', borderTop: '1px solid var(--line)' }}>
                             <div className="label" style={{ padding: '14px 0 2px' }}>Enforcement verdicts</div>
                             <BarRow label="Block" value={stats.verdicts.BLOCK || 0} total={stats.accounts.length} tone="var(--crit)" />
                             <BarRow label="Review" value={stats.verdicts.REVIEW || 0} total={stats.accounts.length} tone="var(--warn)" />
-                            <BarRow label="Approve" value={stats.verdicts.APPROVE || 0} total={stats.accounts.length} tone="var(--ink-3)" />
+                            <BarRow label="Approve" value={stats.verdicts.APPROVE || 0} total={stats.accounts.length} tone="var(--pos)" />
                         </div>
                     </motion.section>
                 </div>

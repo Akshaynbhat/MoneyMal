@@ -2,14 +2,16 @@ import { useMemo, useState, useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-    BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
+    BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie,
 } from 'recharts';
 import { useAppContext } from '../App';
 import NodeInspector from '../components/NodeInspector';
 import { Icon, PageHead, Score, Verdict, EmptyState, tierOf } from '../components/ui';
 import { formatNum, patternLabel } from '../lib/format';
 
-const C = { crit: '#cf7166', warn: '#d3a45c', low: '#6b6860', sage: '#a6b79c', ink: '#aaa59a' };
+const C = { crit: '#e8675c', warn: '#e6a94f', low: '#5fbf8f', sage: '#a6b79c', ink: '#5c9fe0' };
+/* Categorical palette for pattern / ring-type donuts */
+const PALETTE = ['#e8675c', '#ec8a4c', '#ecc556', '#5fbf8f', '#4dbfb0', '#5c9fe0', '#a27fe0', '#e07fb0'];
 const AXIS = { fontSize: 11, fill: '#78746c', fontFamily: 'IBM Plex Mono, monospace' };
 
 function ChartTooltip({ active, payload, label }) {
@@ -24,6 +26,42 @@ function ChartTooltip({ active, payload, label }) {
                 </div>
             ))}
         </div>
+    );
+}
+
+function DonutPanel({ title, meta, data, labelOf, hintOf, capitalize }) {
+    const total = data.reduce((sum, d) => sum + d.value, 0);
+    return (
+        <section className="panel" style={{ minWidth: 0 }}>
+            <div className="panel-head"><span className="panel-title">{title}</span>{meta && <span className="panel-meta">{meta}</span>}</div>
+            {data.length === 0 ? <EmptyState title="Nothing detected" /> : (
+                <div className="donut-wrap">
+                    <div style={{ width: 200, height: 200, position: 'relative', flexShrink: 0 }}>
+                        <ResponsiveContainer width={200} height={200}>
+                            <PieChart>
+                                <Pie data={data} dataKey="value" nameKey="name" innerRadius={58} outerRadius={92} paddingAngle={2} stroke="#181816" strokeWidth={2} isAnimationActive>
+                                    {data.map((d, i) => <Cell key={d.name} fill={PALETTE[i % PALETTE.length]} />)}
+                                </Pie>
+                                <Tooltip content={<ChartTooltip />} />
+                            </PieChart>
+                        </ResponsiveContainer>
+                        <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none', textAlign: 'center' }}>
+                            <div><div className="num" style={{ fontSize: '1.4rem' }}>{formatNum(total)}</div><div className="label" style={{ fontSize: '0.58rem' }}>Total</div></div>
+                        </div>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0, maxWidth: 520, maxHeight: 220, overflowY: 'auto' }}>
+                        {data.map((d, i) => (
+                            <div key={d.name} className="flex items-center gap-2" style={{ padding: '5px 0', fontSize: '0.78rem', borderBottom: '1px solid var(--line)' }}>
+                                <span style={{ width: 9, height: 9, borderRadius: 2, background: PALETTE[i % PALETTE.length], flexShrink: 0 }} />
+                                <span className="mono" style={{ color: 'var(--ink)', textTransform: capitalize ? 'capitalize' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={hintOf?.(d.name) || d.name}>{labelOf(d.name)}</span>
+                                <span className="num" style={{ marginLeft: 'auto', color: 'var(--ink-2)' }}>{formatNum(d.value)}</span>
+                                <span className="num" style={{ color: 'var(--ink-4)', width: 38, textAlign: 'right' }}>{total ? ((d.value / total) * 100).toFixed(0) : 0}%</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+        </section>
     );
 }
 
@@ -187,8 +225,6 @@ export default function RiskAnalysisPage() {
 
     const highRisk = accounts.filter((a) => a.suspicion_score > 70).length;
     const avgScore = accounts.length ? (accounts.reduce((s, a) => s + a.suspicion_score, 0) / accounts.length).toFixed(1) : '0';
-    const maxPattern = patternDist[0]?.value || 1;
-    const maxRingType = ringTypeData[0]?.value || 1;
 
     const locate = (id) => { if (!id) return; setSelectedNode(id); navigate('/graph'); };
 
@@ -197,12 +233,12 @@ export default function RiskAnalysisPage() {
             <PageHead eyebrow="Risk & findings" title="Findings register" sub="Coordinated groups ranked by risk, with the account-level evidence behind each one, followed by the score and pattern distribution for the whole run." />
 
             <section className="metric-strip" style={{ '--cols': 6 }} aria-label="Intelligence summary">
-                <div className="metric"><div className="metric-k">Total accounts</div><div className="metric-v">{formatNum(result.summary.total_accounts_analyzed)}</div></div>
-                <div className="metric"><div className="metric-k">Flagged</div><div className="metric-v">{formatNum(result.summary.suspicious_accounts_flagged)}</div></div>
+                <div className="metric"><div className="metric-k">Total accounts</div><div className="metric-v" style={{ color: 'var(--role-leaf)' }}>{formatNum(result.summary.total_accounts_analyzed)}</div></div>
+                <div className="metric"><div className="metric-k">Flagged</div><div className="metric-v" style={{ color: 'var(--warn)' }}>{formatNum(result.summary.suspicious_accounts_flagged)}</div></div>
                 <div className={`metric ${highRisk ? 'crit' : ''}`}><div className="metric-k">High risk</div><div className="metric-v">{formatNum(highRisk)}</div></div>
-                <div className="metric"><div className="metric-k">Fraud rings</div><div className="metric-v">{formatNum(result.summary.fraud_rings_detected)}</div></div>
-                <div className="metric"><div className="metric-k">Mean score</div><div className="metric-v">{avgScore}</div></div>
-                <div className="metric"><div className="metric-k">Processing</div><div className="metric-v">{result.summary.processing_time_seconds.toFixed(2)}<small>s</small></div></div>
+                <div className="metric"><div className="metric-k">Fraud rings</div><div className="metric-v" style={{ color: 'var(--role-bridge)' }}>{formatNum(result.summary.fraud_rings_detected)}</div></div>
+                <div className="metric"><div className="metric-k">Avg score</div><div className="metric-v" style={{ color: 'var(--role-hub)' }}>{avgScore}</div></div>
+                <div className="metric"><div className="metric-k">Processing</div><div className="metric-v" style={{ color: 'var(--pos)' }}>{result.summary.processing_time_seconds.toFixed(2)}<small>s</small></div></div>
             </section>
 
             {/* Findings */}
@@ -251,7 +287,7 @@ export default function RiskAnalysisPage() {
                             <YAxis tick={AXIS} axisLine={false} tickLine={false} width={40} allowDecimals={false} />
                             <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(236,231,220,0.04)' }} />
                             <Bar dataKey="count" name="Accounts" radius={[2, 2, 0, 0]} maxBarSize={36}>
-                                {scoreDistribution.map((entry, i) => <Cell key={i} fill={i >= 7 ? C.crit : i >= 3 ? C.warn : C.low} fillOpacity={0.72} />)}
+                                {scoreDistribution.map((entry, i) => <Cell key={i} fill={i >= 7 ? C.crit : i >= 3 ? C.warn : C.low} fillOpacity={0.85} />)}
                             </Bar>
                         </BarChart>
                     </ResponsiveContainer>
@@ -265,29 +301,13 @@ export default function RiskAnalysisPage() {
                             <YAxis dataKey="name" type="category" tick={{ ...AXIS, fontSize: 10, fill: '#aaa59a' }} width={118} axisLine={false} tickLine={false} interval={0} />
                             <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(236,231,220,0.04)' }} />
                             <Bar dataKey="score" name="Score" radius={[0, 2, 2, 0]} maxBarSize={12}>
-                                {top10.map((entry, i) => <Cell key={i} fill={entry.score > 70 ? C.crit : entry.score > 30 ? C.warn : C.low} fillOpacity={0.72} />)}
+                                {top10.map((entry, i) => <Cell key={i} fill={entry.score > 70 ? C.crit : entry.score > 30 ? C.warn : C.low} fillOpacity={0.85} />)}
                             </Bar>
                         </BarChart>
                     </ResponsiveContainer>
                 </ChartPanel>
 
-                <section className="panel" style={{ minWidth: 0 }}>
-                    <div className="panel-head"><span className="panel-title">Detected pattern types</span><span className="panel-meta">Accounts exhibiting each pattern</span></div>
-                    <div style={{ padding: '8px 18px 14px', maxHeight: 268, overflowY: 'auto' }}>
-                        {patternDist.length === 0 && <EmptyState title="No patterns detected" />}
-                        {patternDist.map((p) => (
-                            <div key={p.name} style={{ padding: '7px 0' }}>
-                                <div className="flex items-center justify-between gap-3" style={{ fontSize: '0.8rem' }}>
-                                    <span style={{ color: 'var(--ink-2)' }}><span className="mono" style={{ color: 'var(--ink)' }}>{p.name}</span>{patternLabel(p.name) !== p.name && <span style={{ color: 'var(--ink-4)', marginLeft: 8 }}>{patternLabel(p.name)}</span>}</span>
-                                    <span className="num">{formatNum(p.value)}</span>
-                                </div>
-                                <div style={{ height: 3, background: 'var(--line)', borderRadius: 2, marginTop: 6 }}>
-                                    <div style={{ width: `${(p.value / maxPattern) * 100}%`, height: '100%', background: C.sage, opacity: 0.75, borderRadius: 2 }} />
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </section>
+                <DonutPanel title="Detected pattern types" meta="Accounts exhibiting each pattern" data={patternDist} labelOf={(n) => n} hintOf={(n) => (patternLabel(n) !== n ? patternLabel(n) : null)} />
 
                 <ChartPanel title="Ring size & risk" meta={<span className="flex items-center gap-3"><span className="flex items-center gap-1"><i style={{ width: 8, height: 8, background: C.ink, display: 'inline-block' }} />Members</span><span className="flex items-center gap-1"><i style={{ width: 8, height: 8, background: C.crit, display: 'inline-block' }} />Risk</span></span>}>
                     {ringSizeData.length === 0 ? <EmptyState title="No rings" /> : (
@@ -297,30 +317,16 @@ export default function RiskAnalysisPage() {
                                 <XAxis dataKey="name" tick={AXIS} axisLine={{ stroke: 'rgba(236,231,220,0.12)' }} tickLine={false} />
                                 <YAxis tick={AXIS} axisLine={false} tickLine={false} width={40} />
                                 <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(236,231,220,0.04)' }} />
-                                <Bar dataKey="members" fill={C.ink} fillOpacity={0.55} radius={[2, 2, 0, 0]} name="Members" maxBarSize={22} />
+                                <Bar dataKey="members" fill={C.ink} fillOpacity={0.75} radius={[2, 2, 0, 0]} name="Members" maxBarSize={22} />
                                 <Bar dataKey="risk" fill={C.crit} fillOpacity={0.75} radius={[2, 2, 0, 0]} name="Risk score" maxBarSize={22} />
                             </BarChart>
                         </ResponsiveContainer>
                     )}
                 </ChartPanel>
 
-                <section className="panel lg:col-span-2" style={{ minWidth: 0 }}>
-                    <div className="panel-head"><span className="panel-title">Mule types detected</span><span className="panel-meta">Rings by pattern type</span></div>
-                    <div className="grid gap-x-10 sm:grid-cols-2 lg:grid-cols-3" style={{ padding: '8px 18px 14px' }}>
-                        {ringTypeData.length === 0 && <EmptyState title="No rings" />}
-                        {ringTypeData.map((r) => (
-                            <div key={r.name} style={{ padding: '8px 0' }}>
-                                <div className="flex items-center justify-between" style={{ fontSize: '0.82rem' }}>
-                                    <span style={{ textTransform: 'capitalize' }}>{r.name}</span>
-                                    <span className="num">{r.value}</span>
-                                </div>
-                                <div style={{ height: 3, background: 'var(--line)', borderRadius: 2, marginTop: 6 }}>
-                                    <div style={{ width: `${(r.value / maxRingType) * 100}%`, height: '100%', background: C.ink, opacity: 0.6, borderRadius: 2 }} />
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </section>
+                <div className="lg:col-span-2">
+                    <DonutPanel title="Mule types detected" meta="Rings by pattern type" data={ringTypeData} labelOf={(n) => n} capitalize />
+                </div>
             </div>
 
             <AnimatePresence>
