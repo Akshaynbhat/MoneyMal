@@ -1,8 +1,17 @@
 import axios from 'axios';
 
+/*
+ * Backend location
+ * - VITE_API_URL set (e.g. on Vercel): calls go to that host, e.g. https://moneymal-api.onrender.com
+ * - Otherwise: same-origin "/api" — works when FastAPI serves the built frontend,
+ *   and in `npm run dev` through the Vite proxy to localhost:8000.
+ */
+const BACKEND_ORIGIN = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '').replace(/\/api$/, '');
+export const API_BASE = `${BACKEND_ORIGIN}/api`;
+
 const API = axios.create({
-    baseURL: 'http://localhost:8000/api',
-    timeout: 30000,  // Short timeout — each call is just a small HTTP ping
+    baseURL: API_BASE,
+    timeout: 90000,  // Generous enough to ride out a cold start on free hosting tiers
 });
 
 /**
