@@ -2,6 +2,8 @@
 
 > Graph-based money muling detection engine / Financial Crime Detection
 
+Live Link: https://money-mal-nxch.vercel.app/
+
 ![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green?logo=fastapi&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61dafb?logo=react&logoColor=white)
