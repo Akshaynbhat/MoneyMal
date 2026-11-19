@@ -3,6 +3,7 @@ import { Network } from 'vis-network';
 import { DataSet } from 'vis-data';
 import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
+import { Icon, PageHead, EmptyState } from '../components/ui';
 
 // Mappings for pretty alert names
 const ALERT_LABELS = {
@@ -51,6 +52,7 @@ export default function LiveTrackingPage() {
     const nodesRef = useRef(null);
     const edgesRef = useRef(null);
     const processedTxnsRef = useRef([]);
+    const userMovedRef = useRef(false);
 
     // Parse CSV locally
     const handleFileUpload = (e) => {
@@ -96,6 +98,7 @@ export default function LiveTrackingPage() {
         setTotalAlertsCount(0);
         setHighScore(0.0);
         
+        userMovedRef.current = false;
         if (nodesRef.current) nodesRef.current.clear();
         if (edgesRef.current) edgesRef.current.clear();
     };
@@ -121,17 +124,18 @@ export default function LiveTrackingPage() {
             },
             nodes: {
                 shape: 'dot',
-                size: 11,
                 color: {
-                    background: '#3498db',
-                    border: '#2980b9',
-                    highlight: { background: '#FFFFFF', border: '#00E5FF' },
+                    background: '#5f5c55',
+                    border: '#4a4843',
+                    highlight: { background: '#5f5c55', border: '#bccbb2' },
+                    hover: { background: '#5f5c55', border: '#ece7dc' },
                 },
-                font: { size: 10, color: '#E8EAF6', face: 'monospace' },
+                size: 8,
+                font: { size: 10, color: '#8b877e', face: 'IBM Plex Mono, monospace', strokeWidth: 3, strokeColor: '#141412' },
             },
             edges: {
-                color: 'rgba(80,160,220,0.35)',
-                arrows: { to: { enabled: true, scaleFactor: 0.5 } },
+                color: { color: 'rgba(236,231,220,0.14)', highlight: 'rgba(188,203,178,0.9)', hover: 'rgba(236,231,220,0.4)' },
+                arrows: { to: { enabled: true, scaleFactor: 0.45 } },
                 smooth: { type: 'curvedCW', roundness: 0.15 },
             },
             interaction: { hover: true, tooltipDelay: 50 },
@@ -142,6 +146,13 @@ export default function LiveTrackingPage() {
             edges: edgesRef.current
         }, options);
         networkRef.current = network;
+
+        // Keep the growing graph framed until the analyst zooms or pans themselves
+        network.on('zoom', () => { userMovedRef.current = true; });
+        network.on('dragEnd', (p) => { if (!p.nodes?.length) userMovedRef.current = true; });
+        network.on('stabilized', () => {
+            if (!userMovedRef.current) network.fit({ animation: false, maxZoomLevel: 1 });
+        });
 
         return () => {
             if (networkRef.current) networkRef.current.destroy();
@@ -203,11 +214,12 @@ export default function LiveTrackingPage() {
 
             // Update Vis.js Node color and size dynamically
             if (nodesRef.current.get(accId)) {
-                const color = score > 70 ? '#ff3b3b' : score > 30 ? '#ff9f1c' : '#3498db';
-                const size = score > 70 ? 20 : score > 30 ? 15 : 11;
+                const color = score > 70 ? '#cf7166' : score > 30 ? '#d3a45c' : '#5f5c55';
+                const size = score > 70 ? 15 : score > 30 ? 11 : 8;
                 nodesRef.current.update({
                     id: accId,
-                    color: { background: color, border: '#ffffff' },
+                    color: { background: color, border: score > 30 ? '#ece7dc' : '#4a4843', highlight: { background: color, border: '#bccbb2' } },
+                    font: { color: score > 30 ? '#ece7dc' : '#8b877e' },
                     size: size
                 });
             }
@@ -239,6 +251,17 @@ export default function LiveTrackingPage() {
             return prev;
         });
     };
+
+    // Keep the growing graph framed while streaming, until the analyst zooms or pans
+    useEffect(() => {
+        if (!isPlaying) return;
+        const t = setInterval(() => {
+            const net = networkRef.current;
+            if (!net || userMovedRef.current || !nodesRef.current?.length) return;
+            net.fit({ animation: false, maxZoomLevel: 1 });
+        }, 1000);
+        return () => clearInterval(t);
+    }, [isPlaying]);
 
     // Replay loop ticker
     useEffect(() => {
@@ -280,10 +303,11 @@ export default function LiveTrackingPage() {
                 from: senderId,
                 to: receiverId,
                 label: `₹${Number(nextTxn.amount).toLocaleString()}`,
-                font: { size: 8, color: 'rgba(255,255,255,0.4)', background: 'rgba(10,14,26,0.8)' }
+                font: { size: 8, color: 'rgba(236,231,220,0.38)', face: 'IBM Plex Mono, monospace', strokeWidth: 3, strokeColor: '#141412' }
             });
 
             setProgressIndex(prev => prev + 1);
+
 
             // Trigger analysis every 10 transactions
             if (processedTxnsRef.current.length % 10 === 0) {
@@ -294,174 +318,147 @@ export default function LiveTrackingPage() {
         return () => clearInterval(timer);
     }, [isPlaying, allTxns, progressIndex, speed, runIncrementalAnalysis]);
 
+
+    const pct = allTxns.length ? (progressIndex / allTxns.length) * 100 : 0;
+    const finished = allTxns.length > 0 && progressIndex >= allTxns.length;
+    const nodeCount = nodesRef.current ? nodesRef.current.length : 0;
+
     return (
-        <div className="max-w-[1600px] mx-auto px-6 py-6" style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
-            
-            {/* Header controls */}
-            <div className="flex items-center justify-between mb-4 glass-card p-4">
-                <div>
-                    <h1 style={{ fontFamily: 'var(--font-mono)', fontWeight: 800, fontSize: '1.2rem', letterSpacing: '0.1em', margin: 0 }}>
-                        ⚡ <span style={{ color: 'var(--color-accent)' }}>LIVE</span> FRAUD MONITOR
-                    </h1>
-                    <p style={{ color: 'var(--color-text-dim)', fontSize: '0.65rem', margin: '2px 0 0 0' }}>
-                        Simulating transaction streams with real-time graph mapping and score evaluations
-                    </p>
+        <div className="page" style={{ maxWidth: 'none', minHeight: 'calc(100vh - var(--topbar-h))', display: 'flex', flexDirection: 'column', paddingBottom: 24 }}>
+            <PageHead
+                eyebrow="Simulation"
+                title="Live monitor"
+                sub="Replays a ledger locally in timestamp order and re-scores the growing graph with the engine every 10 transactions."
+            >
+                <label className="btn" style={{ cursor: 'pointer' }}>
+                    <Icon name="intake" size={14} /> {fileName ? 'Replace file' : 'Load CSV'}
+                    <input type="file" accept=".csv" className="hidden" onChange={handleFileUpload} />
+                </label>
+                <button className="btn btn-solid" disabled={allTxns.length === 0 || finished} onClick={() => setIsPlaying(!isPlaying)}>
+                    <Icon name={isPlaying ? 'pause' : 'play'} size={14} /> {isPlaying ? 'Pause' : progressIndex > 0 ? 'Resume' : 'Start'}
+                </button>
+                <button className="btn" onClick={resetSimulation} disabled={allTxns.length === 0}>
+                    <Icon name="refresh" size={14} /> Reset
+                </button>
+                <select className="select" value={speed} onChange={(e) => setSpeed(Number(e.target.value))} aria-label="Playback speed" style={{ height: 32 }}>
+                    <option value={1}>1 txn/s</option>
+                    <option value={5}>5 txn/s</option>
+                    <option value={15}>15 txn/s</option>
+                </select>
+            </PageHead>
+
+            {/* KPI strip */}
+            <section className="metric-strip" style={{ '--cols': 4, '--cols-md': 4 }}>
+                <div className="metric">
+                    <div className="metric-k">Processed</div>
+                    <div className="metric-v">{progressIndex.toLocaleString('en-IN')}<small>/ {allTxns.length.toLocaleString('en-IN')}</small></div>
+                    <div className="progress" style={{ marginTop: 10 }}><i style={{ width: `${pct}%` }} /></div>
                 </div>
-                
-                <div className="flex items-center gap-4">
-                    {!fileName ? (
-                        <label className="btn-primary" style={{ padding: '6px 14px', fontSize: '0.75rem', cursor: 'pointer' }}>
-                            Upload CSV File
-                            <input type="file" accept=".csv" className="hidden" onChange={handleFileUpload} />
-                        </label>
-                    ) : (
-                        <div className="flex items-center gap-2">
-                            <span style={{ fontSize: '0.75rem', color: 'var(--color-accent)', fontFamily: 'var(--font-mono)' }}>{fileName}</span>
-                            <button className="btn-secondary" style={{ padding: '3px 8px', fontSize: '0.65rem' }} onClick={resetSimulation}>Change</button>
+                <div className="metric">
+                    <div className="metric-k">Graph nodes</div>
+                    <div className="metric-v">{nodeCount.toLocaleString('en-IN')}</div>
+                    <div className="metric-n">Accounts seen so far</div>
+                </div>
+                <div className={`metric ${totalAlertsCount > 0 ? 'crit' : ''}`}>
+                    <div className="metric-k">Alerts triggered</div>
+                    <div className="metric-v">{totalAlertsCount}</div>
+                    <div className="metric-n">Score ≥ 40, per pattern</div>
+                </div>
+                <div className={`metric ${highScore > 70 ? 'crit' : highScore > 30 ? 'warn' : ''}`}>
+                    <div className="metric-k">Peak score</div>
+                    <div className="metric-v">{highScore.toFixed(1)}</div>
+                    <div className="metric-n">Highest account score</div>
+                </div>
+            </section>
+
+            <div className="live-grid grid gap-5 mt-5 lg:grid-cols-[340px_minmax(0,1fr)]">
+                <div className="live-side grid gap-5">
+                    {/* Alerts */}
+                    <section className="panel" style={{ display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+                        <div className="panel-head">
+                            <span className="panel-title">Alert feed</span>
+                            <span className="panel-meta">{alerts.length > 0 ? `Latest ${alerts.length}` : 'Idle'}</span>
                         </div>
-                    )}
-
-                    <button className="btn-primary" disabled={allTxns.length === 0} onClick={() => setIsPlaying(!isPlaying)}>
-                        {isPlaying ? '⏸ PAUSE' : '▶ START'}
-                    </button>
-                    <button className="btn-secondary" onClick={resetSimulation}>
-                        ↺ RESET
-                    </button>
-
-                    <div className="flex items-center gap-1.5" style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)' }}>
-                        <span style={{ color: 'var(--color-text-dim)' }}>Speed:</span>
-                        <select 
-                            value={speed} 
-                            onChange={(e) => setSpeed(Number(e.target.value))} 
-                            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', padding: '3px 8px', borderRadius: 4 }}
-                        >
-                            <option value={1}>1 txn/s (Slow)</option>
-                            <option value={5}>5 txns/s (Med)</option>
-                            <option value={15}>15 txns/s (Fast)</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
-
-            {/* KPI metrics bar */}
-            <div className="grid grid-cols-4 gap-4 mb-4">
-                <div className="glass-card p-3 text-center">
-                    <div style={{ fontSize: '1.2rem', fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--color-text-primary)' }}>
-                        {progressIndex} / {allTxns.length}
-                    </div>
-                    <div style={{ fontSize: '0.6rem', color: 'var(--color-text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Transactions Processed</div>
-                </div>
-                <div className="glass-card p-3 text-center">
-                    <div style={{ fontSize: '1.2rem', fontWeight: 700, fontFamily: 'var(--font-mono)', color: '#00E5FF' }}>
-                        {nodesRef.current ? nodesRef.current.length : 0}
-                    </div>
-                    <div style={{ fontSize: '0.6rem', color: 'var(--color-text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Active Graph Nodes</div>
-                </div>
-                <div className="glass-card p-3 text-center">
-                    <div style={{ fontSize: '1.2rem', fontWeight: 700, fontFamily: 'var(--font-mono)', color: '#ff3b3b' }}>
-                        {totalAlertsCount}
-                    </div>
-                    <div style={{ fontSize: '0.6rem', color: 'var(--color-text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Triggered Alerts</div>
-                </div>
-                <div className="glass-card p-3 text-center">
-                    <div style={{ fontSize: '1.2rem', fontWeight: 700, fontFamily: 'var(--font-mono)', color: highScore > 70 ? '#ff3b3b' : highScore > 30 ? '#ff9f1c' : '#00E5FF' }}>
-                        {highScore.toFixed(1)}
-                    </div>
-                    <div style={{ fontSize: '0.6rem', color: 'var(--color-text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Peak Threat Score</div>
-                </div>
-            </div>
-
-            {/* Main content grid */}
-            <div className="flex-1 grid grid-cols-1 lg:grid-cols-4 gap-4 min-h-0">
-                <div className="flex flex-col gap-4 lg:col-span-1 min-h-0">
-                    
-                    {/* Live Alerts Box */}
-                    <div className="glass-card p-4 flex-1 flex flex-col min-h-0" style={{ borderColor: alerts.length > 0 ? 'rgba(255, 59, 59, 0.25)' : 'rgba(255, 255, 255, 0.05)' }}>
-                        <h2 style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.05em', color: '#ff3b3b', marginBottom: 12 }}>
-                            🚨 FRAUD ALERTS FEED
-                        </h2>
-                        
-                        <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-2">
-                            <AnimatePresence>
+                        <div style={{ flex: 1, overflowY: 'auto' }}>
+                            <AnimatePresence initial={false}>
                                 {alerts.map((alert) => (
-                                    <motion.div 
+                                    <motion.div
                                         key={alert.key}
-                                        className="p-3"
-                                        initial={{ opacity: 0, x: -30 }}
-                                        animate={{ opacity: 1, x: 0 }}
-                                        exit={{ opacity: 0, scale: 0.9 }}
-                                        style={{ background: 'rgba(255,59,59,0.08)', borderLeft: '3px solid #ff3b3b', borderRadius: '4px' }}
+                                        initial={{ opacity: 0, y: -6 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        exit={{ opacity: 0 }}
+                                        transition={{ duration: 0.2 }}
+                                        style={{ display: 'flex', gap: 12, padding: '11px 16px', borderBottom: '1px solid var(--line)' }}
                                     >
-                                        <div className="flex justify-between items-start" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem' }}>
-                                            <span style={{ fontWeight: 'bold', color: '#fff' }}>{alert.account_id}</span>
-                                            <span className="badge badge-high" style={{ padding: '1px 5px', fontSize: '0.6rem' }}>{alert.score.toFixed(0)}</span>
-                                        </div>
-                                        <div style={{ fontSize: '0.68rem', color: '#ff8a8a', marginTop: 4, fontFamily: 'var(--font-mono)' }}>
-                                            {ALERT_LABELS[alert.pattern] || alert.pattern}
-                                        </div>
-                                        <div style={{ display: 'flex', justifycontent: 'space-between', fontSize: '0.6rem', color: 'var(--color-text-dim)', marginTop: 4 }}>
-                                            <span>{getBankName(alert.account_id)}</span>
-                                            <span>{alert.timestamp}</span>
+                                        <span className={`sev-rail ${alert.score > 70 ? 'crit' : 'warn'}`} />
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                            <div className="flex items-center justify-between gap-2">
+                                                <span className="mono" style={{ fontSize: '0.8rem' }}>{alert.account_id}</span>
+                                                <span className="num" style={{ fontSize: '0.78rem', color: alert.score > 70 ? 'var(--crit)' : 'var(--warn)' }}>{alert.score.toFixed(0)}</span>
+                                            </div>
+                                            <div style={{ fontSize: '0.76rem', color: 'var(--ink-2)', marginTop: 3 }}>{ALERT_LABELS[alert.pattern] || alert.pattern}</div>
+                                            <div className="flex justify-between" style={{ fontSize: '0.68rem', color: 'var(--ink-4)', marginTop: 3 }}>
+                                                <span>{getBankName(alert.account_id)}</span>
+                                                <span className="mono">{alert.timestamp}</span>
+                                            </div>
                                         </div>
                                     </motion.div>
                                 ))}
-                                {alerts.length === 0 && (
-                                    <div className="flex-1 flex items-center justify-center text-center p-4">
-                                        <p style={{ color: 'var(--color-text-dim)', fontSize: '0.7rem', fontFamily: 'var(--font-mono)' }}>
-                                            Waiting for data... <br />Flagged threats will appear here.
-                                        </p>
-                                    </div>
-                                )}
                             </AnimatePresence>
+                            {alerts.length === 0 && (
+                                <EmptyState icon="alert" title="No alerts yet">Accounts scoring 40 or more appear here as the stream is analysed.</EmptyState>
+                            )}
                         </div>
-                    </div>
+                    </section>
 
-                    {/* Scrolling Transaction Ledger */}
-                    <div className="glass-card p-4" style={{ height: '220px', display: 'flex', flexDirection: 'column' }}>
-                        <h2 style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 8 }}>
-                            ▩ TRANSACTION LEDGER
-                        </h2>
-                        <div className="flex-1 overflow-y-auto flex flex-col gap-1.5 font-mono text-[0.65rem] text-[#8b949e]">
+                    {/* Ledger */}
+                    <section className="panel" style={{ display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+                        <div className="panel-head">
+                            <span className="panel-title">Stream</span>
+                            <span className="panel-meta">Last 40 transactions</span>
+                        </div>
+                        <div style={{ flex: 1, overflowY: 'auto' }}>
                             {processedTxns.map((tx, idx) => (
-                                <div key={`${tx.transaction_id}-${idx}`} className="flex justify-between p-1 hover:bg-[rgba(255,255,255,0.02)] rounded">
-                                    <span style={{ color: 'var(--color-accent)' }}>{tx.sender_id.split('_').slice(1).join('_') || tx.sender_id} ➔ {tx.receiver_id.split('_').slice(1).join('_') || tx.receiver_id}</span>
-                                    <span style={{ color: '#fff', fontWeight: 'bold' }}>₹{Number(tx.amount).toLocaleString()}</span>
+                                <div key={`${tx.transaction_id}-${idx}`} className="flex items-center justify-between gap-3 mono" style={{ padding: '6px 16px', fontSize: '0.72rem', borderBottom: '1px solid var(--line)' }}>
+                                    <span style={{ color: 'var(--ink-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        {tx.sender_id.split('_').slice(1).join('_') || tx.sender_id}
+                                        <span style={{ color: 'var(--ink-4)', margin: '0 6px' }}>→</span>
+                                        {tx.receiver_id.split('_').slice(1).join('_') || tx.receiver_id}
+                                    </span>
+                                    <span className="num" style={{ color: 'var(--ink)', flexShrink: 0 }}>₹{Number(tx.amount).toLocaleString()}</span>
                                 </div>
                             ))}
                             {processedTxns.length === 0 && (
-                                <div className="flex-1 flex items-center justify-center text-center text-gray-500">
-                                    Queue idle
-                                </div>
+                                <div style={{ padding: '28px 16px', textAlign: 'center', fontSize: '0.78rem', color: 'var(--ink-3)' }}>Queue idle</div>
                             )}
                         </div>
-                    </div>
+                    </section>
                 </div>
 
-                {/* Right Panel: Vis.js Canvas */}
-                <div className="lg:col-span-3 glass-card relative min-h-0" style={{ display: 'flex', flexDirection: 'column' }}>
-                    <div style={{ position: 'absolute', top: 12, left: 12, zIndex: 5, display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{
-                            width: 8, height: 8, borderRadius: '50%',
-                            background: isPlaying ? '#ff3b3b' : '#8b949e',
-                            boxShadow: isPlaying ? '0 0 8px #ff3b3b' : 'none',
-                            animation: isPlaying ? 'live-blink 1.2s infinite' : 'none'
-                        }} />
-                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: isPlaying ? '#ff3b3b' : 'var(--color-text-dim)', letterSpacing: '0.08em', fontWeight: 'bold' }}>
-                            {isPlaying ? 'LIVE STREAM RUNNING' : 'STREAM STOPPED'}
+                {/* Graph canvas */}
+                <section className="panel graph-canvas live-canvas" style={{ overflow: 'hidden' }}>
+                    <div className="graph-overlay flex items-center gap-3" style={{ top: 14, left: 14 }}>
+                        <span className="tag" style={{ background: 'var(--bg-raised)', color: isPlaying ? 'var(--ink)' : 'var(--ink-3)' }}>
+                            <span className={`status-dot ${isPlaying ? 'live' : ''}`} />
+                            {isPlaying ? 'Streaming' : finished ? 'Stream complete' : 'Stopped'}
                         </span>
+                        {analyzing && (
+                            <span className="tag" style={{ background: 'var(--bg-raised)' }}>
+                                <span className="spinner" style={{ width: 10, height: 10 }} /> Scoring
+                            </span>
+                        )}
+                        {fileName && <span className="tag muted hide-sm" style={{ background: 'var(--bg-raised)' }}>{fileName}</span>}
                     </div>
-
-                    <div ref={containerRef} style={{ flex: 1, width: '100%', height: '100%' }} />
-                </div>
+                    {processedTxns.length === 0 && (
+                        <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none', zIndex: 1 }}>
+                            <EmptyState icon="live" title={allTxns.length ? 'Ready to stream' : 'No stream loaded'}>
+                                {allTxns.length ? `${allTxns.length.toLocaleString('en-IN')} transactions queued. Press Start.` : 'Load a CSV with transaction_id, sender_id, receiver_id, amount and timestamp columns.'}
+                            </EmptyState>
+                        </div>
+                    )}
+                    <div ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
+                </section>
             </div>
-
-            <style>{`
-                @keyframes live-blink {
-                    0% { opacity: 0.3; }
-                    50% { opacity: 1; }
-                    100% { opacity: 0.3; }
-                }
-            `}</style>
         </div>
     );
 }

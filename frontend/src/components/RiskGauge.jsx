@@ -1,73 +1,26 @@
-import { useMemo } from 'react';
-
+/* Linear risk scale: a 0–100 track with tier bands and a marker.
+   Thresholds (30 / 50 / 70) match the labels the gauge always used. */
 export default function RiskGauge({ score = 0 }) {
-    const normalized = Math.min(100, Math.max(0, score));
-    const angle = -135 + (normalized / 100) * 270;
-
-    const getColor = (s) => {
-        if (s > 70) return '#FF3B3B';
-        if (s > 30) return '#FF9F1C';
-        return '#00FF94';
-    };
-
-    const label = useMemo(() => {
-        if (normalized > 70) return 'CRITICAL';
-        if (normalized > 50) return 'HIGH';
-        if (normalized > 30) return 'MODERATE';
-        return 'LOW';
-    }, [normalized]);
-
-    const color = getColor(normalized);
+    const v = Math.min(100, Math.max(0, Number(score) || 0));
+    const label = v > 70 ? 'Critical' : v > 50 ? 'High' : v > 30 ? 'Moderate' : 'Low';
+    const tone = v > 70 ? 'var(--crit)' : v > 30 ? 'var(--warn)' : 'var(--pos)';
 
     return (
-        <div style={{ position: 'relative', width: 180, height: 110 }}>
-            <svg viewBox="0 0 200 120" style={{ width: '100%', height: '100%' }}>
-                {/* Background arc */}
-                <path
-                    d="M 20 100 A 80 80 0 1 1 180 100"
-                    fill="none"
-                    stroke="rgba(0, 245, 255, 0.08)"
-                    strokeWidth="10"
-                    strokeLinecap="round"
-                />
-                {/* Colored arc */}
-                <path
-                    d="M 20 100 A 80 80 0 1 1 180 100"
-                    fill="none"
-                    stroke={color}
-                    strokeWidth="10"
-                    strokeLinecap="round"
-                    strokeDasharray={`${(normalized / 100) * 251} 251`}
-                    style={{ filter: `drop-shadow(0 0 8px ${color}50)`, transition: 'stroke-dasharray 1s ease' }}
-                />
-                {/* Needle */}
-                <line
-                    x1="100"
-                    y1="100"
-                    x2={100 + 55 * Math.cos((angle * Math.PI) / 180)}
-                    y2={100 + 55 * Math.sin((angle * Math.PI) / 180)}
-                    stroke={color}
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                    style={{ transition: 'all 1s ease', filter: `drop-shadow(0 0 4px ${color})` }}
-                />
-                {/* Center dot */}
-                <circle cx="100" cy="100" r="5" fill={color} style={{ filter: `drop-shadow(0 0 6px ${color})` }} />
-                {/* Score text */}
-                <text x="100" y="88" textAnchor="middle" fill={color} fontFamily="var(--font-mono)" fontWeight="700" fontSize="22">
-                    {normalized.toFixed(0)}
-                </text>
-            </svg>
-            <div style={{ textAlign: 'center', marginTop: -8 }}>
-                <span style={{
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: '0.65rem',
-                    fontWeight: 600,
-                    color,
-                    letterSpacing: '0.12em',
-                }}>
-                    {label}
-                </span>
+        <div>
+            <div className="flex items-baseline justify-between">
+                <span className="num" style={{ fontSize: '1.5rem', letterSpacing: '-0.03em' }}>{v.toFixed(1)}</span>
+                <span className="tag" style={{ color: tone, borderColor: 'var(--line-2)' }}>{label}</span>
+            </div>
+            <div style={{ position: 'relative', marginTop: 12, height: 18 }}>
+                <div style={{ position: 'absolute', top: 7, left: 0, right: 0, height: 4, display: 'flex', gap: 2 }}>
+                    <span style={{ width: '30%', background: 'rgba(111,171,136,0.35)', borderRadius: '2px 0 0 2px' }} />
+                    <span style={{ width: '40%', background: 'rgba(211,164,92,0.35)' }} />
+                    <span style={{ width: '30%', background: 'rgba(207,113,102,0.4)', borderRadius: '0 2px 2px 0' }} />
+                </div>
+                <div style={{ position: 'absolute', top: 0, left: `calc(${v}% - 1px)`, width: 2, height: 18, background: 'var(--ink)', borderRadius: 1, transition: 'left 0.6s var(--ease)' }} />
+            </div>
+            <div className="flex justify-between mono" style={{ fontSize: '0.64rem', color: 'var(--ink-4)', marginTop: 4 }}>
+                <span>0</span><span>30</span><span>70</span><span>100</span>
             </div>
         </div>
     );

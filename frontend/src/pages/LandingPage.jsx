@@ -1,227 +1,103 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useRef, useState, useCallback } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppContext } from '../App';
 import { previewMapping } from '../services/api';
+import { Icon, PageHead } from '../components/ui';
+import { formatBytes, formatNum } from '../lib/format';
 
-/* ── Particle Network Background ── */
-function ParticleCanvas() {
-    const canvasRef = useRef(null);
+const REQUIRED = ['transaction_id', 'sender_id', 'receiver_id', 'amount', 'timestamp'];
+const CHECKS = [
+    ['Cycle detection', 'Circular routing of funds across 3–5 accounts'],
+    ['Shell networks', 'Pass-through intermediaries with minimal retention'],
+    ['Smurfing', 'Many small deposits aggregated, then moved'],
+    ['Structuring', 'Activity shaped to stay under account-type limits'],
+];
 
-    useEffect(() => {
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        const ctx = canvas.getContext('2d');
-        let animId;
-        let particles = [];
-
-        const resize = () => {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-        };
-        resize();
-        window.addEventListener('resize', resize);
-
-        class Particle {
-            constructor() {
-                this.x = Math.random() * canvas.width;
-                this.y = Math.random() * canvas.height;
-                this.vx = (Math.random() - 0.5) * 0.4;
-                this.vy = (Math.random() - 0.5) * 0.4;
-                this.r = Math.random() * 2 + 1;
-                this.alpha = Math.random() * 0.5 + 0.1;
-            }
-            update() {
-                this.x += this.vx;
-                this.y += this.vy;
-                if (this.x < 0 || this.x > canvas.width) this.vx *= -1;
-                if (this.y < 0 || this.y > canvas.height) this.vy *= -1;
-            }
-            draw() {
-                ctx.beginPath();
-                ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
-                ctx.fillStyle = `rgba(0, 245, 255, ${this.alpha})`;
-                ctx.fill();
-            }
-        }
-
-        for (let i = 0; i < 80; i++) particles.push(new Particle());
-
-        function animate() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            particles.forEach((p) => { p.update(); p.draw(); });
-
-            for (let i = 0; i < particles.length; i++) {
-                for (let j = i + 1; j < particles.length; j++) {
-                    const dx = particles[i].x - particles[j].x;
-                    const dy = particles[i].y - particles[j].y;
-                    const dist = Math.sqrt(dx * dx + dy * dy);
-                    if (dist < 150) {
-                        ctx.beginPath();
-                        ctx.moveTo(particles[i].x, particles[i].y);
-                        ctx.lineTo(particles[j].x, particles[j].y);
-                        ctx.strokeStyle = `rgba(0, 245, 255, ${0.08 * (1 - dist / 150)})`;
-                        ctx.lineWidth = 0.5;
-                        ctx.stroke();
-                    }
-                }
-            }
-            animId = requestAnimationFrame(animate);
-        }
-        animate();
-
-        return () => {
-            cancelAnimationFrame(animId);
-            window.removeEventListener('resize', resize);
-        };
-    }, []);
-
-    return <canvas ref={canvasRef} style={{ position: 'fixed', inset: 0, zIndex: 0 }} />;
+/* ── Column mapping preview ── */
+function matchMeta(matchType, required = true) {
+    if (!matchType) return required ? { label: 'not found', cls: 'crit', icon: 'x' } : { label: 'optional · absent', cls: 'muted', icon: 'minus' };
+    if (matchType === 'exact') return { label: 'exact', cls: 'pos', icon: 'check' };
+    if (matchType.startsWith('alias')) return { label: matchType, cls: 'sage', icon: 'arrowLeft' };
+    if (matchType.startsWith('fuzzy')) return { label: matchType, cls: 'warn', icon: 'info' };
+    return { label: matchType, cls: 'muted', icon: 'info' };
 }
 
-/* ── Column Mapping Preview Card ── */
-function MappingPreviewCard({ mappingPreview, mappingLoading, mappingError }) {
+function MappingPreview({ mappingPreview, mappingLoading, mappingError }) {
     if (mappingLoading) {
         return (
-            <motion.div
-                className="glass-card mt-6 p-4"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                style={{ textAlign: 'left' }}
-            >
-                <p style={{ color: 'var(--color-accent)', fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>
-                    ◌ Analyzing column structure...
-                </p>
-            </motion.div>
+            <div className="panel">
+                <div className="panel-head"><span className="panel-title">Column mapping</span><span className="spinner" /></div>
+                <div className="panel-body" style={{ display: 'grid', gap: 10 }}>
+                    {REQUIRED.map((c) => <div key={c} className="skeleton" style={{ height: 12, width: `${50 + c.length * 2}%` }} />)}
+                </div>
+            </div>
         );
     }
 
     if (mappingError) {
         return (
-            <motion.div
-                className="glass-card mt-6 p-4"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                style={{ textAlign: 'left', borderColor: 'rgba(255,59,59,0.3)' }}
-            >
-                <p style={{ color: 'var(--color-risk-red)', fontSize: '0.8rem' }}>
-                    ✕ Preview failed: {mappingError}
-                </p>
-            </motion.div>
+            <div className="notice crit">
+                <Icon name="alert" size={15} />
+                <div><strong>Column preview failed.</strong> {mappingError}</div>
+            </div>
         );
     }
 
     if (!mappingPreview) return null;
-
-    const { mapping, warnings, preview_rows, total_rows, total_columns } = mappingPreview;
-
-    const matchIcon = (matchType) => {
-        if (!matchType) return '✕';
-        if (matchType === 'exact') return '✓';
-        if (matchType.startsWith('alias')) return '↪';
-        if (matchType.startsWith('fuzzy')) return '≈';
-        return '?';
-    };
-
-    const matchColor = (matchType) => {
-        if (!matchType) return 'var(--color-risk-red)';
-        if (matchType === 'exact') return 'var(--color-risk-green)';
-        if (matchType.startsWith('alias')) return 'var(--color-accent)';
-        return '#f59e0b';
-    };
+    const { mapping, warnings = [], preview_rows, total_rows, total_columns } = mappingPreview;
 
     return (
-        <motion.div
-            className="glass-card mt-6 p-5"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            style={{ textAlign: 'left' }}
-        >
-            {/* Header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--color-accent)', fontWeight: 700, letterSpacing: '0.08em' }}>
-                    COLUMN MAPPING PREVIEW
-                </p>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--color-text-dim)' }}>
-                    {total_rows.toLocaleString()} rows · {total_columns} cols
-                </span>
+        <motion.div className="panel" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
+            <div className="panel-head">
+                <span className="panel-title">Column mapping</span>
+                <span className="panel-meta mono">{formatNum(total_rows)} rows · {total_columns} columns</span>
             </div>
 
-            {/* Mapping rows */}
-            <div style={{ display: 'grid', gap: '6px', marginBottom: warnings.length > 0 ? '12px' : '0' }}>
-                {Object.entries(mapping).map(([canonical, info]) => (
-                    <div key={canonical} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ color: matchColor(info?.match_type), fontFamily: 'var(--font-mono)', fontSize: '0.8rem', minWidth: '16px' }}>
-                            {matchIcon(info?.match_type)}
-                        </span>
-                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--color-text-primary)', minWidth: '130px' }}>
-                            {canonical}
-                        </span>
-                        {info ? (
-                            <>
-                                <span style={{ color: 'var(--color-text-dim)', fontSize: '0.7rem' }}>←</span>
-                                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: info.match_type === 'exact' ? 'var(--color-risk-green)' : 'var(--color-accent)' }}>
-                                    {info.original_column}
-                                </span>
-                                <span style={{ fontSize: '0.65rem', color: 'var(--color-text-dim)', marginLeft: '4px' }}>
-                                    ({info.match_type})
-                                </span>
-                            </>
-                        ) : (
-                            <span style={{ fontSize: '0.72rem', color: 'var(--color-risk-red)' }}>
-                                not found
-                            </span>
-                        )}
-                    </div>
-                ))}
-            </div>
+            <table className="data-table compact">
+                <thead>
+                    <tr><th>Engine field</th><th>Source column</th><th>Match</th></tr>
+                </thead>
+                <tbody>
+                    {Object.entries(mapping).map(([canonical, info]) => {
+                        const m = matchMeta(info?.match_type, REQUIRED.includes(canonical));
+                        return (
+                            <tr key={canonical}>
+                                <td className="id">{canonical}</td>
+                                <td className="mono" style={{ fontSize: '0.78rem', color: info ? 'var(--ink-2)' : 'var(--ink-4)' }}>
+                                    {info ? info.original_column : '—'}
+                                </td>
+                                <td><span className={`tag ${m.cls}`}><Icon name={m.icon} size={11} stroke={2} />{m.label}</span></td>
+                            </tr>
+                        );
+                    })}
+                </tbody>
+            </table>
 
-            {/* Warnings */}
             {warnings.length > 0 && (
-                <div style={{ marginTop: '10px', padding: '8px 10px', borderRadius: '6px', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)' }}>
-                    {warnings.map((w, i) => (
-                        <p key={i} style={{ color: '#f59e0b', fontSize: '0.72rem', fontFamily: 'var(--font-mono)', marginBottom: i < warnings.length - 1 ? '4px' : 0 }}>
-                            ⚠ {w}
-                        </p>
-                    ))}
+                <div style={{ padding: '0 18px 16px' }}>
+                    <div className="notice warn">
+                        <Icon name="alert" size={15} />
+                        <div style={{ display: 'grid', gap: 3 }}>
+                            {warnings.map((w, i) => <span key={i} className="mono" style={{ fontSize: '0.76rem' }}>{w}</span>)}
+                        </div>
+                    </div>
                 </div>
             )}
 
-            {/* Preview table */}
             {preview_rows && preview_rows.length > 0 && (
-                <div style={{ marginTop: '14px' }}>
-                    <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--color-text-dim)', marginBottom: '6px', letterSpacing: '0.05em' }}>
-                        FIRST {preview_rows.length} ROWS (MAPPED)
-                    </p>
-                    <div style={{ overflowX: 'auto' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.65rem', fontFamily: 'var(--font-mono)' }}>
+                <div style={{ borderTop: '1px solid var(--line)' }}>
+                    <div className="label" style={{ padding: '14px 18px 8px' }}>First {preview_rows.length} rows, mapped</div>
+                    <div className="table-wrap" style={{ maxHeight: 260 }}>
+                        <table className="data-table compact">
                             <thead>
-                                <tr>
-                                    {Object.keys(preview_rows[0]).map((col) => (
-                                        <th key={col} style={{
-                                            padding: '4px 8px',
-                                            textAlign: 'left',
-                                            color: 'var(--color-accent)',
-                                            borderBottom: '1px solid rgba(0,245,255,0.15)',
-                                            whiteSpace: 'nowrap',
-                                        }}>
-                                            {col}
-                                        </th>
-                                    ))}
-                                </tr>
+                                <tr>{Object.keys(preview_rows[0]).map((col) => <th key={col}>{col}</th>)}</tr>
                             </thead>
                             <tbody>
                                 {preview_rows.map((row, i) => (
-                                    <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                    <tr key={i}>
                                         {Object.values(row).map((val, j) => (
-                                            <td key={j} style={{
-                                                padding: '4px 8px',
-                                                color: 'var(--color-text-secondary)',
-                                                whiteSpace: 'nowrap',
-                                                maxWidth: '160px',
-                                                overflow: 'hidden',
-                                                textOverflow: 'ellipsis',
-                                            }}>
+                                            <td key={j} className="mono" style={{ fontSize: '0.74rem', color: 'var(--ink-2)', whiteSpace: 'nowrap', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                                 {String(val)}
                                             </td>
                                         ))}
@@ -236,9 +112,22 @@ function MappingPreviewCard({ mappingPreview, mappingLoading, mappingError }) {
     );
 }
 
+function Step({ n, title, detail, state }) {
+    return (
+        <div className={`step ${state}`}>
+            <div className="step-n">{state === 'done' ? <Icon name="check" size={13} stroke={2} /> : state === 'error' ? <Icon name="x" size={12} stroke={2} /> : n}</div>
+            <div>
+                <div className="step-t">{title}</div>
+                {detail && <div className="step-d">{detail}</div>}
+            </div>
+        </div>
+    );
+}
+
 export default function LandingPage() {
-    const { file, setFile, analyze, loading, error, progress, showToast } = useAppContext();
+    const { file, setFile, analyze, loading, error, progress, showToast, result } = useAppContext();
     const navigate = useNavigate();
+    const inputRef = useRef(null);
     const [dragOver, setDragOver] = useState(false);
     const [mappingPreview, setMappingPreview] = useState(null);
     const [mappingLoading, setMappingLoading] = useState(false);
@@ -247,215 +136,203 @@ export default function LandingPage() {
     const handleFile = useCallback(async (f) => {
         if (f && f.name.endsWith('.csv')) {
             setFile(f);
-            showToast(`Loaded: ${f.name} (${(f.size / 1024).toFixed(0)} KB)`, 'success');
+            showToast(`Loaded ${f.name} (${(f.size / 1024).toFixed(0)} KB)`, 'success');
 
             // Trigger column mapping preview
             setMappingLoading(true);
             setMappingPreview(null);
             setMappingError(null);
             try {
-                const result = await previewMapping(f);
-                setMappingPreview(result);
+                const res = await previewMapping(f);
+                setMappingPreview(res);
             } catch (err) {
                 setMappingError(err?.response?.data?.detail || err.message || 'Preview failed');
             } finally {
                 setMappingLoading(false);
             }
-        } else {
+        } else if (f) {
             showToast('Please upload a CSV file', 'error');
         }
     }, [setFile, showToast]);
 
     const handleAnalyze = useCallback(async () => {
         if (!file) return;
-        await analyze(file);
-        navigate('/dashboard');
-    }, [file, analyze, navigate]);
+        const ok = await analyze(file);
+        if (ok) {
+            showToast('Analysis complete', 'success');
+            navigate('/dashboard');
+        }
+    }, [file, analyze, navigate, showToast]);
 
-    // Determine if user can proceed: require all mandatory columns to be mapped
+    // Require all mandatory columns to be mapped
     const hasRequiredCols = mappingPreview ? (mappingPreview.warnings?.length === 0) : true;
+    const canRun = file && !loading && !mappingLoading && hasRequiredCols;
+
+    const validateState = !file ? '' : mappingLoading ? 'current' : (mappingError || !hasRequiredCols) ? 'error' : mappingPreview ? 'done' : '';
+    const runState = loading ? 'current' : error ? 'error' : (validateState === 'done' ? 'current' : '');
+
+    const phase = progress < 20 ? 'Uploading dataset' : 'Building graph · running detection · scoring accounts';
 
     return (
-        <div className="relative min-h-screen flex items-center justify-center overflow-hidden">
-            <ParticleCanvas />
-            <div className="landing-gradient" />
-
-            <motion.div
-                className="relative z-10 text-center max-w-2xl mx-auto px-6"
-                style={{ width: '100%' }}
-                initial={{ opacity: 0, y: 30 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.8, ease: 'easeOut' }}
+        <div className="page">
+            <PageHead
+                eyebrow="Intake"
+                title="Open an investigation"
+                sub="Load a transaction ledger. MoneyMal maps its columns, builds the counterparty graph, and scores every account for mule behaviour."
             >
-                {/* Logo */}
-                <motion.div
-                    initial={{ scale: 0.8, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    transition={{ delay: 0.2, duration: 0.6 }}
-                >
-                    <h1 style={{ fontFamily: 'var(--font-mono)', fontWeight: 900, fontSize: '3.2rem', letterSpacing: '0.15em', lineHeight: 1 }}>
-                        <span style={{ color: 'var(--color-accent)' }}>MONEY</span>
-                        <span style={{ color: 'var(--color-text-primary)' }}>MAL</span>
-                    </h1>
-                    <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.85rem', marginTop: '12px', letterSpacing: '0.04em' }}>
-                        AI-Powered Graph Intelligence for Financial Crime Detection
-                    </p>
-                </motion.div>
+                <Link to="/live" className="btn"><Icon name="live" size={14} /> Live monitor</Link>
+            </PageHead>
 
-                {/* Upload Section */}
-                <motion.div
-                    className="mt-12"
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.5, duration: 0.6 }}
-                >
-                    <div
-                        className={`upload-zone ${dragOver ? 'active' : ''}`}
-                        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                        onDragLeave={() => setDragOver(false)}
-                        onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files[0]); }}
-                        onClick={() => document.getElementById('csv-upload').click()}
-                    >
-                        <input
-                            id="csv-upload"
-                            type="file"
-                            accept=".csv"
-                            className="hidden"
-                            onChange={(e) => handleFile(e.target.files[0])}
-                        />
-                        {file ? (
-                            <div>
-                                <div style={{ fontSize: '2rem', color: 'var(--color-risk-green)', marginBottom: '8px' }}>✓</div>
-                                <p style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-accent)', fontWeight: 600, fontSize: '0.9rem' }}>
-                                    {file.name}
-                                </p>
-                                <p style={{ color: 'var(--color-text-dim)', fontSize: '0.75rem', marginTop: '4px', fontFamily: 'var(--font-mono)' }}>
-                                    {(file.size / 1024).toFixed(1)} KB — Ready to analyze
-                                </p>
-                            </div>
-                        ) : (
-                            <div>
-                                <div style={{ fontSize: '2.5rem', opacity: 0.3, marginBottom: '12px' }}>⬆</div>
-                                <p style={{ color: 'var(--color-text-primary)', fontSize: '0.9rem', fontWeight: 500 }}>
-                                    Drop transaction CSV here or click to browse
-                                </p>
-                                <p style={{ color: 'var(--color-text-dim)', fontFamily: 'var(--font-mono)', fontSize: '0.7rem', marginTop: '10px' }}>
-                                    Required: transaction_id · sender_id · receiver_id · amount · timestamp
-                                </p>
-                            </div>
-                        )}
+            {result && !loading && (
+                <div className="notice" style={{ marginBottom: 20 }}>
+                    <Icon name="info" size={15} />
+                    <div style={{ flex: 1 }}>
+                        <strong>An investigation is open</strong> — {formatNum(result.summary?.total_accounts_analyzed)} accounts, {formatNum(result.summary?.suspicious_accounts_flagged)} flagged.
+                        Running a new analysis replaces it.
                     </div>
+                    <Link to="/dashboard" className="btn btn-sm">Return to overview</Link>
+                </div>
+            )}
 
-                    {/* Column Mapping Preview */}
-                    <AnimatePresence>
-                        {(mappingLoading || mappingPreview || mappingError) && (
-                            <MappingPreviewCard
-                                mappingPreview={mappingPreview}
-                                mappingLoading={mappingLoading}
-                                mappingError={mappingError}
+            <div className="grid gap-5" style={{ gridTemplateColumns: 'minmax(0,1fr)' }}>
+                <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
+                    {/* Main column */}
+                    <div className="grid gap-4 content-start">
+                        <div
+                            className={`dropzone ${dragOver ? 'active' : ''}`}
+                            style={file ? { padding: '22px 24px', flexDirection: 'row', gap: 14 } : undefined}
+                            role="button"
+                            tabIndex={0}
+                            aria-label="Upload transaction CSV"
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inputRef.current?.click(); } }}
+                            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                            onDragLeave={() => setDragOver(false)}
+                            onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files[0]); }}
+                            onClick={() => inputRef.current?.click()}
+                        >
+                            <input
+                                ref={inputRef}
+                                id="csv-upload"
+                                type="file"
+                                accept=".csv"
+                                className="hidden"
+                                onChange={(e) => { handleFile(e.target.files[0]); e.target.value = ''; }}
                             />
-                        )}
-                    </AnimatePresence>
-
-                    {/* Progress Bar */}
-                    {loading && (
-                        <motion.div
-                            className="mt-6"
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                        >
-                            <div className="progress-bar-container">
-                                <div className="progress-bar-fill" style={{ width: `${progress}%` }} />
+                            <div className="dropzone-ico"><Icon name="intake" size={18} /></div>
+                            <div style={{ fontSize: '0.95rem', fontWeight: 500 }}>
+                                {file ? 'Replace dataset' : 'Drop a transaction CSV, or browse'}
                             </div>
-                            <p style={{ color: 'var(--color-accent)', fontFamily: 'var(--font-mono)', fontSize: '0.75rem', marginTop: '10px' }}>
-                                Building graph · Running detection · Scoring accounts...
-                            </p>
-                        </motion.div>
-                    )}
+                            <div style={{ fontSize: '0.78rem', color: 'var(--ink-3)', display: file ? 'none' : 'block' }}>
+                                CSV only · columns are matched automatically, including common aliases
+                            </div>
+                        </div>
 
-                    {error && (
-                        <motion.div
-                            className="mt-4 glass-card p-4"
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            style={{ borderColor: 'rgba(255, 59, 59, 0.3)' }}
-                        >
-                            <span style={{ color: 'var(--color-risk-red)', fontSize: '0.8rem' }}>✕ {error}</span>
-                        </motion.div>
-                    )}
+                        {file && (
+                            <div className="panel" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 18px' }}>
+                                <div className="dropzone-ico" style={{ width: 36, height: 36 }}><Icon name="file" size={16} /></div>
+                                <div style={{ minWidth: 0, flex: 1 }}>
+                                    <div className="mono" style={{ fontSize: '0.86rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</div>
+                                    <div style={{ fontSize: '0.74rem', color: 'var(--ink-3)', marginTop: 2 }}>
+                                        {formatBytes(file.size)}
+                                        {mappingPreview && <> · <span className="mono">{formatNum(mappingPreview.total_rows)}</span> rows</>}
+                                    </div>
+                                </div>
+                                {mappingLoading ? <span className="tag muted">Validating…</span>
+                                    : mappingPreview && hasRequiredCols ? <span className="tag pos tag-dot">Valid</span>
+                                    : (mappingError || !hasRequiredCols) ? <span className="tag crit tag-dot">Needs attention</span> : null}
+                            </div>
+                        )}
 
-                    {/* Column mapping verification feedback */}
-                    {mappingPreview && !loading && (
-                        hasRequiredCols ? (
-                            <motion.div
-                                className="mt-3 glass-card p-3"
-                                initial={{ opacity: 0 }}
-                                animate={{ opacity: 1 }}
-                                style={{ borderColor: 'rgba(34, 197, 94, 0.3)', textAlign: 'left' }}
-                            >
-                                <span style={{ color: 'var(--color-risk-green)', fontSize: '0.75rem', fontFamily: 'var(--font-mono)' }}>
-                                    ✓ All required columns mapped — ready to analyze
-                                </span>
-                            </motion.div>
-                        ) : (
-                            <motion.div
-                                className="mt-3 glass-card p-4"
-                                initial={{ opacity: 0 }}
-                                animate={{ opacity: 1 }}
-                                style={{ borderColor: 'rgba(239, 68, 68, 0.4)', textAlign: 'left', background: 'rgba(239, 68, 68, 0.05)' }}
-                            >
-                                <div style={{ color: 'var(--color-risk-red)', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '8px' }}>
-                                    ✕ Missing required columns
-                                </div>
-                                <div style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', marginBottom: '8px' }}>
-                                    {mappingPreview.warnings.map((w, idx) => (
-                                        <p key={idx} style={{ margin: '2px 0' }}>• {w}</p>
-                                    ))}
-                                </div>
-                                <div style={{ fontSize: '0.7rem', color: 'var(--color-text-dim)', fontFamily: 'var(--font-mono)' }}>
-                                    Available columns in file: {mappingPreview.available_columns ? mappingPreview.available_columns.join(', ') : 'none'}
-                                </div>
-                            </motion.div>
-                        )
-                    )}
+                        <AnimatePresence>
+                            {(mappingLoading || mappingPreview || mappingError) && (
+                                <MappingPreview mappingPreview={mappingPreview} mappingLoading={mappingLoading} mappingError={mappingError} />
+                            )}
+                        </AnimatePresence>
 
-                    <div className="flex gap-4 justify-center mt-8">
-                        <motion.button
-                            className="btn-glow"
-                            disabled={!file || loading || mappingLoading || !hasRequiredCols}
-                            onClick={handleAnalyze}
-                            whileHover={{ scale: 1.03 }}
-                            whileTap={{ scale: 0.98 }}
-                            style={{ margin: 0 }}
-                        >
-                            {loading ? '◌ ANALYZING...' : mappingLoading ? '◌ PREVIEWING...' : '▶ LAUNCH ANALYSIS'}
-                        </motion.button>
-                        <motion.button
-                            className="btn-secondary"
-                            onClick={() => navigate('/live')}
-                            whileHover={{ scale: 1.03 }}
-                            whileTap={{ scale: 0.98 }}
-                            style={{ padding: '12px 24px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}
-                        >
-                            ⚡ LIVE SIMULATOR
-                        </motion.button>
+                        {mappingPreview && !loading && !hasRequiredCols && (
+                            <div className="notice crit">
+                                <Icon name="alert" size={15} />
+                                <div>
+                                    <strong>Missing required columns.</strong> The analysis cannot run until every required field is mapped.
+                                    <div className="mono" style={{ fontSize: '0.74rem', marginTop: 6, color: 'var(--ink-3)' }}>
+                                        Columns in file: {mappingPreview.available_columns ? mappingPreview.available_columns.join(', ') : 'none'}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {error && (
+                            <div className="notice crit" role="alert">
+                                <Icon name="alert" size={15} />
+                                <div><strong>Analysis failed.</strong> {error}</div>
+                            </div>
+                        )}
+
+                        {/* Run */}
+                        <div className="panel" style={{ padding: '16px 18px' }}>
+                            {loading ? (
+                                <div>
+                                    <div className="flex items-center justify-between" style={{ marginBottom: 10, fontSize: '0.82rem' }}>
+                                        <span style={{ color: 'var(--ink-2)' }}>{phase}</span>
+                                        <span className="mono" style={{ color: 'var(--ink-3)' }}>{progress}%</span>
+                                    </div>
+                                    <div className="progress"><i style={{ width: `${Math.max(progress, 4)}%` }} /></div>
+                                    <div style={{ fontSize: '0.74rem', color: 'var(--ink-4)', marginTop: 10 }}>
+                                        Large ledgers can take several minutes. You can leave this page open.
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="flex items-center justify-between gap-4 flex-wrap">
+                                    <div style={{ fontSize: '0.82rem', color: 'var(--ink-2)' }}>
+                                        {!file ? 'Select a dataset to begin.'
+                                            : mappingLoading ? 'Validating column structure…'
+                                            : !hasRequiredCols ? 'Resolve the missing columns to continue.'
+                                            : mappingError ? 'Column preview unavailable — the analysis can still be submitted.'
+                                            : 'Dataset validated. Ready to run detection.'}
+                                    </div>
+                                    <button className="btn btn-solid btn-lg" disabled={!canRun} onClick={handleAnalyze}>
+                                        Run analysis <Icon name="arrowRight" size={15} />
+                                    </button>
+                                </div>
+                            )}
+                        </div>
                     </div>
-                </motion.div>
 
-                {/* Bottom info */}
-                <motion.div
-                    className="mt-16 flex justify-center gap-8"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: 0.8 }}
-                >
-                    {['Cycle Detection', 'Shell Networks', 'Smurfing', 'Structuring'].map((f) => (
-                        <span key={f} style={{ color: 'var(--color-text-dim)', fontSize: '0.7rem', fontFamily: 'var(--font-mono)', letterSpacing: '0.05em' }}>
-                            {f}
-                        </span>
-                    ))}
-                </motion.div>
-            </motion.div>
+                    {/* Side column */}
+                    <aside className="grid gap-4 content-start">
+                        <div className="panel">
+                            <div className="panel-head"><span className="panel-title">Workflow</span></div>
+                            <div className="panel-body">
+                                <div className="steps">
+                                    <Step n={1} title="Select dataset" detail={file ? file.name : 'CSV transaction ledger'} state={file ? 'done' : 'current'} />
+                                    <Step n={2} title="Validate columns" detail="Map fields to the engine schema" state={validateState} />
+                                    <Step n={3} title="Run analysis" detail="Graph build, detection, scoring" state={runState} />
+                                    <Step n={4} title="Review findings" detail="Overview, network, ledger" state="" />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="panel">
+                            <div className="panel-head"><span className="panel-title">Required fields</span></div>
+                            <div className="panel-body" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                {REQUIRED.map((c) => <span key={c} className="pattern-chip">{c}</span>)}
+                            </div>
+                        </div>
+
+                        <div className="panel">
+                            <div className="panel-head"><span className="panel-title">Detection coverage</span></div>
+                            <div style={{ padding: '4px 18px 12px' }}>
+                                {CHECKS.map(([t, d], i) => (
+                                    <div key={t} style={{ padding: '10px 0', borderBottom: i < CHECKS.length - 1 ? '1px solid var(--line)' : 0 }}>
+                                        <div style={{ fontSize: '0.82rem' }}>{t}</div>
+                                        <div style={{ fontSize: '0.74rem', color: 'var(--ink-3)', marginTop: 2 }}>{d}</div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </aside>
+                </div>
+            </div>
         </div>
     );
 }

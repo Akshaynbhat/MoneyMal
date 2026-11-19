@@ -2,72 +2,91 @@ import { useEffect, useRef, useState } from 'react';
 import { Network } from 'vis-network';
 import { DataSet } from 'vis-data';
 
-/* ─── Colour palette (matches legend in GraphPage) ─── */
-const C = {
-    HUB:    { bg: '#9b59b6', border: '#8e44ad', glow: 'rgba(155,89,182,0.45)'  }, // Purple
-    BRIDGE: { bg: '#e67e22', border: '#d35400', glow: 'rgba(230,126,34,0.45)'  }, // Orange
-    MULE:   { bg: '#f1c40f', border: '#f39c12', glow: 'rgba(241,196,15,0.45)'  }, // Yellow
-    LEAF:   { bg: '#3498db', border: '#2980b9', glow: 'rgba(52,152,219,0.25)'  }, // Blue
+/* ─── Visual encoding ───────────────────────────────────────────────────────
+   Colour  = risk tier (score > 70 critical, > 30 elevated, else neutral)
+   Shape   = structural role (HUB ◆, BRIDGE ■, MULE ▲, LEAF ●)
+   Border  = ivory ring when the account belongs to a detected fraud ring
+   Sage    = current selection                                               */
+export const GRAPH_COLORS = {
+    crit: { bg: '#cf7166', border: '#b85d53' },
+    warn: { bg: '#d3a45c', border: '#b98b45' },
+    low: { bg: '#5f5c55', border: '#4a4843' },
+    ring: '#ece7dc',
+    select: '#bccbb2',
+    edge: 'rgba(236,231,220,0.13)',
+    edgeRing: 'rgba(207,113,102,0.5)',
+    edgeHi: 'rgba(188,203,178,0.75)',
 };
 
-function nodeColours(role) {
-    if (role === 'HUB') return C.HUB;
-    if (role === 'BRIDGE') return C.BRIDGE;
-    if (role === 'MULE') return C.MULE;
-    return C.LEAF;
+export const ROLE_SHAPES = { HUB: 'diamond', BRIDGE: 'square', MULE: 'triangle', LEAF: 'dot' };
+
+const tier = (s) => (s > 70 ? 'crit' : s > 30 ? 'warn' : 'low');
+const inr = (v) => (v != null ? '₹' + Number(v).toLocaleString('en-IN') : '–');
+
+/* Tooltip built as DOM (vis-network renders string titles as plain text). */
+function buildTooltip(n) {
+    const el = document.createElement('div');
+    el.className = 'gtip';
+    const p = n.four_pillar_scores || {};
+    const mult = Number(p.Multiplier ?? 1);
+    const add = (parent, tag, cls, text) => {
+        const c = document.createElement(tag);
+        if (cls) c.className = cls;
+        if (text != null) c.textContent = text;
+        parent.appendChild(c);
+        return c;
+    };
+    const row = (parent, k, v, color) => {
+        const r = add(parent, 'div', 'gtip-row');
+        add(r, 'span', null, k);
+        const val = add(r, 'span', null, v);
+        if (color) val.style.color = color;
+    };
+
+    const h = add(el, 'div', 'gtip-h');
+    add(h, 'span', 'gtip-id', String(n.id));
+    add(h, 'span', 'gtip-role', n.structural_role || 'LEAF');
+
+    const t = tier(n.suspicion_score);
+    const tone = t === 'crit' ? 'var(--crit)' : t === 'warn' ? 'var(--warn)' : 'var(--ink-2)';
+    const vTone = n.verdict === 'BLOCK' ? 'var(--crit)' : n.verdict === 'REVIEW' ? 'var(--warn)' : 'var(--pos)';
+    row(el, 'Suspicion score', `${Number(n.suspicion_score).toFixed(1)} / 100`, tone);
+    row(el, 'Verdict', n.verdict || 'APPROVE', vTone);
+
+    const g = add(el, 'div', 'gtip-grid');
+    row(g, 'GAT', `${p.GAT ?? 0}/35`);
+    row(g, 'LSTM', `${p.LSTM ?? 0}/25`);
+    row(g, 'EIF', `${p.EIF ?? 0}/20`);
+    row(g, 'Rules', `${p.Rules ?? 0}/20`);
+    row(el, 'Role multiplier', `${mult.toFixed(2)}×`);
+    row(el, 'Received', inr(n.total_incoming));
+    row(el, 'Sent', inr(n.total_outgoing));
+    row(el, 'Rings', (n.ring_ids || []).join(', ') || 'None');
+    const pats = (n.detected_patterns || []).join(', ');
+    if (pats) {
+        const d = add(el, 'div', null, pats);
+        d.style.cssText = 'margin-top:8px;padding-top:8px;border-top:1px solid var(--line);font-family:var(--font-mono);font-size:10.5px;color:var(--ink-2);';
+    }
+    return el;
 }
 
-/* ─── Rich HTML tooltip ─── */
-function buildTooltip(n) {
-    const verdict = n.verdict === 'BLOCK' ? '🔴 BLOCK' : n.verdict === 'REVIEW' ? '🟡 REVIEW' : '🟢 APPROVE';
-    const role    = n.structural_role || 'LEAF';
-    const GAT     = n.four_pillar_scores?.GAT ?? 0;
-    const LSTM    = n.four_pillar_scores?.LSTM ?? 0;
-    const EIF     = n.four_pillar_scores?.EIF ?? 0;
-    const Rules   = n.four_pillar_scores?.Rules ?? 0;
-    const mult    = n.four_pillar_scores?.Multiplier ?? 1.0;
-    
-    const patterns = (n.detected_patterns || []).join(', ') || 'None';
-    const rings    = (n.ring_ids || []).join(', ')           || 'None';
-    const inAmt    = n.total_incoming != null ? '₹' + n.total_incoming.toLocaleString() : '–';
-    const outAmt   = n.total_outgoing != null ? '₹' + n.total_outgoing.toLocaleString() : '–';
-
-    return `
-        <div style="
-            background:#0d1117;border:1px solid #30363d;border-radius:10px;
-            padding:14px 18px;font-family:monospace;font-size:12px;color:#e6edf3;
-            min-width:240px;line-height:1.8;box-shadow:0 8px 30px rgba(0,0,0,0.7);
-        ">
-            <div style="font-size:13px;font-weight:700;color:#58a6ff;margin-bottom:6px">${n.id} <span style="color:#8b949e;font-size:10px;font-weight:normal">[${role}]</span></div>
-            <div>${verdict} &nbsp;<strong style="color:#fff">${Number(n.suspicion_score).toFixed(1)}</strong>/100</div>
-            <hr style="border:none;border-top:1px solid #30363d;margin:8px 0">
-            <div style="color:#8b949e;font-size:10px;letter-spacing:.08em">PILLAR SCORES</div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:11px">
-                <div><span style="color:#8b949e">GAT</span> ${GAT}/35</div>
-                <div><span style="color:#8b949e">LSTM</span> ${LSTM}/25</div>
-                <div><span style="color:#8b949e">EIF</span> ${EIF}/20</div>
-                <div><span style="color:#8b949e">Rules</span> ${Rules}/20</div>
-            </div>
-            <div style="font-size:10px;margin-top:4px">Role Multiplier: <span style="color:#58a6ff">${mult.toFixed(2)}x</span></div>
-            <hr style="border:none;border-top:1px solid #30363d;margin:8px 0">
-            <div style="color:#8b949e;font-size:10px;letter-spacing:.08em">PATTERNS</div>
-            <div>${patterns}</div>
-            <div style="color:#8b949e;font-size:10px;letter-spacing:.08em;margin-top:6px">RING MEMBERSHIP</div>
-            <div>${rings}</div>
-            <hr style="border:none;border-top:1px solid #30363d;margin:8px 0">
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:11px">
-                <div><span style="color:#8b949e">Received</span>&nbsp;${inAmt}</div>
-                <div><span style="color:#8b949e">Sent</span>&nbsp;${outAmt}</div>
-            </div>
-        </div>`;
+function edgeTooltip(title) {
+    if (!title) return undefined;
+    const el = document.createElement('div');
+    el.className = 'gtip';
+    el.style.minWidth = '0';
+    el.style.fontFamily = 'var(--font-mono)';
+    el.textContent = title;
+    return el;
 }
 
 /* ─── Component ─── */
-export default function NetworkGraph({ data, onNodeClick }) {
+export default function NetworkGraph({ data, onNodeClick, apiRef, selectedId }) {
     const containerRef = useRef(null);
-    const networkRef   = useRef(null);
+    const networkRef = useRef(null);
     const [stabilized, setStabilized] = useState(false);
     const [capped, setCapped] = useState(false);
+    const [renderedCount, setRenderedCount] = useState(0);
 
     useEffect(() => {
         if (!containerRef.current || !data || !data.nodes.length) return;
@@ -85,106 +104,115 @@ export default function NetworkGraph({ data, onNodeClick }) {
             renderedNodes = [...data.nodes]
                 .sort((a, b) => (b.suspicion_score || 0) - (a.suspicion_score || 0))
                 .slice(0, MAX_RENDER_NODES);
-            const nodeIds = new Set(renderedNodes.map(n => n.id));
-            renderedEdges = data.edges.filter(
-                e => nodeIds.has(e.from) && nodeIds.has(e.to)
-            );
+            const nodeIds = new Set(renderedNodes.map((n) => n.id));
+            renderedEdges = data.edges.filter((e) => nodeIds.has(e.from) && nodeIds.has(e.to));
         }
+        setRenderedCount(renderedNodes.length);
+
+        const showAllLabels = renderedNodes.length <= 120;
+        const ringOf = new Map(renderedNodes.map((n) => [n.id, new Set(n.ring_ids || [])]));
 
         /* ── nodes ── */
         const nodes = new DataSet(
             renderedNodes.map((n) => {
-                const c      = nodeColours(n.structural_role || 'LEAF');
-                const size   = n.suspicion_score > 70 ? 24 : n.suspicion_score > 30 ? 17 : 11;
+                const t = tier(n.suspicion_score);
+                const c = GRAPH_COLORS[t];
                 const inRing = (n.ring_ids || []).length > 0;
+                const role = n.structural_role || 'LEAF';
+                const shape = ROLE_SHAPES[role] || 'dot';
+                const base = t === 'crit' ? 22 : t === 'warn' ? 16 : 10;
+                const size = shape === 'dot' ? base : base * 0.85;
                 return {
-                    id:    n.id,
-                    label: n.label || n.id,
+                    id: n.id,
+                    label: showAllLabels || t !== 'low' ? String(n.label || n.id) : undefined,
                     title: buildTooltip(n),
+                    shape,
                     color: {
                         background: c.bg,
-                        border:     inRing ? '#FFFFFF' : c.border,
-                        highlight:  { background: '#FFFFFF', border: '#00E5FF' },
-                        hover:      { background: c.bg,      border: '#FFFFFF' },
+                        border: inRing ? GRAPH_COLORS.ring : c.border,
+                        highlight: { background: c.bg, border: GRAPH_COLORS.select },
+                        hover: { background: c.bg, border: GRAPH_COLORS.ring },
                     },
                     size,
-                    borderWidth:         inRing ? 3 : 1.5,
-                    borderWidthSelected: 4,
+                    borderWidth: inRing ? 2.5 : 1,
+                    borderWidthSelected: 3,
                     font: {
-                        size:       12,
-                        color:      '#E8EAF6',
-                        face:       'JetBrains Mono, Consolas, monospace',
-                        background: 'rgba(10,14,26,0.80)',
-                        strokeWidth: 0,
-                        bold:       n.suspicion_score > 30 ? { color: '#FFFFFF', size: 13 } : false,
+                        size: t === 'low' ? 12 : 13,
+                        color: t === 'low' ? '#8b877e' : '#ece7dc',
+                        face: 'IBM Plex Mono, ui-monospace, monospace',
+                        strokeWidth: 3,
+                        strokeColor: '#141412',
+                        vadjust: 2,
                     },
-                    shadow: {
-                        enabled: n.suspicion_score > 30,
-                        color:   c.glow,
-                        size:    n.suspicion_score > 70 ? 20 : 10,
-                        x: 0, y: 0,
-                    },
-                    _raw: n,
                 };
             })
         );
 
         /* ── edges ── */
         const edges = new DataSet(
-            renderedEdges.map((e, i) => ({
-                id:    `e-${i}`,
-                from:  e.from,
-                to:    e.to,
-                value: e.value || 1,
-                title: e.title ? `<span style="font-family:monospace;font-size:12px;color:#e6edf3">${e.title}</span>` : '',
-                color: {
-                    color:   'rgba(80,160,220,0.40)',
-                    highlight:'rgba(0,229,255,0.95)',
-                    hover:   'rgba(0,229,255,0.60)',
-                    inherit: false,
-                },
-                arrows:         { to: { enabled: true, scaleFactor: 0.6, type: 'arrow' } },
-                smooth:         { type: 'curvedCW', roundness: 0.18 },
-                width:          1.0,
-                selectionWidth: 3,
-                scaling:        { min: 0.8, max: 5 },
-            }))
+            renderedEdges.map((e, i) => {
+                const a = ringOf.get(e.from);
+                const b = ringOf.get(e.to);
+                let intraRing = false;
+                if (a && b && a.size && b.size) for (const r of a) if (b.has(r)) { intraRing = true; break; }
+                return {
+                    id: `e-${i}`,
+                    from: e.from,
+                    to: e.to,
+                    value: e.value || 1,
+                    title: edgeTooltip(e.title),
+                    color: {
+                        color: intraRing ? GRAPH_COLORS.edgeRing : GRAPH_COLORS.edge,
+                        highlight: GRAPH_COLORS.edgeHi,
+                        hover: 'rgba(236,231,220,0.45)',
+                        inherit: false,
+                    },
+                    arrows: { to: { enabled: true, scaleFactor: 0.45, type: 'arrow' } },
+                    smooth: { type: 'curvedCW', roundness: 0.14 },
+                    width: 1,
+                    selectionWidth: (w) => w * 1.15,
+                    hoverWidth: 0.8,
+                    scaling: { min: 0.6, max: 3.5 },
+                };
+            })
         );
 
         /* ── options ── */
         const bigGraph = data.nodes.length > 300;
         const options = {
             autoResize: true,
-            layout:  { improvedLayout: !bigGraph },
+            layout: { improvedLayout: !bigGraph },
             physics: {
                 solver: 'barnesHut',
                 barnesHut: {
                     gravitationalConstant: -6000,
-                    centralGravity:        0.12,
-                    springLength:          170,
-                    springConstant:        0.04,
-                    damping:               0.13,
-                    avoidOverlap:          0.65,
+                    centralGravity: 0.12,
+                    springLength: 170,
+                    springConstant: 0.04,
+                    damping: 0.13,
+                    avoidOverlap: 0.65,
                 },
                 stabilization: {
-                    enabled:        true,
-                    iterations:     bigGraph ? 150 : 300,
+                    enabled: true,
+                    iterations: bigGraph ? 150 : 300,
                     updateInterval: 30,
-                    fit:            true,
+                    fit: true,
                 },
                 minVelocity: 0.75,
             },
-            nodes:   { shape: 'dot', borderWidth: 1.5, borderWidthSelected: 4 },
-            edges:   { width: 1.0, scaling: { min: 0.8, max: 5 } },
+            nodes: { borderWidth: 1, borderWidthSelected: 3 },
+            edges: { width: 1, scaling: { min: 0.6, max: 3.5 } },
             interaction: {
-                hover:           true,
-                tooltipDelay:    80,
-                zoomView:        true,
-                dragView:        true,
-                dragNodes:       true,
-                multiselect:     false,
+                hover: true,
+                tooltipDelay: 120,
+                zoomView: true,
+                dragView: true,
+                dragNodes: true,
+                multiselect: false,
                 hideEdgesOnDrag: bigGraph,
-                keyboard:        false,
+                hideEdgesOnZoom: bigGraph,
+                keyboard: false,
+                selectConnectedEdges: true,
             },
         };
 
@@ -195,60 +223,77 @@ export default function NetworkGraph({ data, onNodeClick }) {
 
         network.on('stabilizationIterationsDone', () => {
             network.setOptions({ physics: { enabled: false } });
-            network.fit({ animation: { duration: 700, easingFunction: 'easeInOutQuad' } });
+            network.fit({ animation: { duration: 600, easingFunction: 'easeInOutQuad' } });
             setStabilized(true);
         });
 
         network.on('click', (params) => {
             if (params.nodes.length > 0) {
-                const nodeId  = params.nodes[0];
+                const nodeId = params.nodes[0];
                 const rawNode = data.nodes.find((n) => String(n.id) === String(nodeId));
                 if (rawNode && onNodeClick) onNodeClick(rawNode);
             }
         });
+
+        network.on('hoverNode', () => { if (containerRef.current) containerRef.current.style.cursor = 'pointer'; });
+        network.on('blurNode', () => { if (containerRef.current) containerRef.current.style.cursor = 'default'; });
 
         return () => {
             if (networkRef.current) { networkRef.current.destroy(); networkRef.current = null; }
         };
     }, [data]); // onNodeClick intentionally omitted — stable callback, avoids full re-render
 
+    /* Imperative controls for the toolbar (zoom / fit / focus) */
+    useEffect(() => {
+        if (!apiRef) return;
+        apiRef.current = {
+            zoom(factor) {
+                const n = networkRef.current; if (!n) return;
+                n.moveTo({ scale: n.getScale() * factor, animation: { duration: 220, easingFunction: 'easeInOutQuad' } });
+            },
+            fit() {
+                networkRef.current?.fit({ animation: { duration: 450, easingFunction: 'easeInOutQuad' } });
+            },
+            focus(id) {
+                const n = networkRef.current; if (!n) return false;
+                const exists = n.body?.data?.nodes?.get(id);
+                if (!exists) return false;
+                n.selectNodes([id]);
+                n.focus(id, { scale: Math.max(1.1, n.getScale()), animation: { duration: 550, easingFunction: 'easeInOutQuad' } });
+                return true;
+            },
+            has(id) { return !!networkRef.current?.body?.data?.nodes?.get(id); },
+        };
+    });
+
+    /* Keep the canvas selection in sync with the inspector */
+    useEffect(() => {
+        const n = networkRef.current;
+        if (!n || !stabilized) return;
+        if (selectedId && n.body?.data?.nodes?.get(selectedId)) {
+            n.selectNodes([selectedId]);
+            n.focus(selectedId, { scale: Math.max(1.1, n.getScale()), animation: { duration: 550, easingFunction: 'easeInOutQuad' } });
+        } else if (!selectedId) {
+            n.unselectAll();
+        }
+    }, [selectedId, stabilized]);
+
     return (
         <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-            {/* Capped warning pill */}
-            {capped && (
-                <div style={{
-                    position: 'absolute', top: 12, right: 12, zIndex: 5,
-                    background: 'rgba(255, 159, 28, 0.15)',
-                    border: '1px solid rgba(255, 159, 28, 0.3)',
-                    borderRadius: 6, padding: '4px 10px',
-                    fontFamily: 'JetBrains Mono, monospace', fontSize: '10px',
-                    color: '#FF9F1C', letterSpacing: '0.05em',
-                    pointerEvents: 'none',
-                }}>
-                    ⚠️ PERFORMANCE MODE: TOP 400 NODES
+            {capped && stabilized && (
+                <div className="graph-overlay tag warn" style={{ bottom: 14, left: 14, pointerEvents: 'none' }}>
+                    Performance mode · top {renderedCount} of {data.nodes.length.toLocaleString('en-IN')} nodes by score
                 </div>
             )}
 
-            {/* Loading overlay */}
             {!stabilized && (
                 <div style={{
                     position: 'absolute', inset: 0, zIndex: 10,
-                    display: 'flex', flexDirection: 'column',
-                    alignItems: 'center', justifyContent: 'center',
-                    background: 'rgba(11,15,26,0.80)',
-                    backdropFilter: 'blur(6px)',
-                    borderRadius: 'inherit',
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12,
+                    background: 'rgba(20,20,18,0.88)',
                 }}>
-                    <div className="graph-spinner" />
-                    <p style={{
-                        marginTop: 16,
-                        fontFamily: 'JetBrains Mono, monospace',
-                        fontSize: '0.72rem',
-                        color: 'rgba(0,229,255,0.75)',
-                        letterSpacing: '0.14em',
-                    }}>
-                        BUILDING GRAPH…
-                    </p>
+                    <div className="spinner" />
+                    <p style={{ fontSize: '0.78rem', color: 'var(--ink-3)' }}>Laying out network…</p>
                 </div>
             )}
             <div ref={containerRef} style={{ width: '100%', height: '100%' }} />

@@ -1,7 +1,8 @@
-import { useState, createContext, useContext } from 'react';
-import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { useState, useCallback, createContext, useContext } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { AnimatePresence } from 'framer-motion';
 import useAnalysis from './hooks/useAnalysis';
-import Navbar from './components/Navbar';
+import { Sidebar, Topbar } from './components/Navbar';
 import LandingPage from './pages/LandingPage';
 import Dashboard from './pages/Dashboard';
 import GraphPage from './pages/GraphPage';
@@ -16,11 +17,36 @@ export function useAppContext() {
   return useContext(AppContext);
 }
 
-function AppNavbar() {
-  const { pathname } = useLocation();
+/* Screens that read analysis results redirect to intake until a run exists. */
+function RequireResult({ children }) {
   const { result } = useAppContext();
-  if (pathname === '/' && !result) return null;
-  return <Navbar />;
+  if (!result) return <Navigate to="/" replace />;
+  return children;
+}
+
+function Shell() {
+  const { result } = useAppContext();
+  const [navOpen, setNavOpen] = useState(false);
+  const closeNav = useCallback(() => setNavOpen(false), []);
+
+  return (
+    <div className="shell">
+      <Sidebar open={navOpen} onClose={closeNav} />
+      <div className="main">
+        <Topbar onMenu={() => setNavOpen(true)} />
+        <Routes>
+          <Route path="/" element={result ? <Dashboard /> : <LandingPage />} />
+          <Route path="/intake" element={<LandingPage />} />
+          <Route path="/dashboard" element={<RequireResult><Dashboard /></RequireResult>} />
+          <Route path="/graph" element={<RequireResult><GraphPage /></RequireResult>} />
+          <Route path="/transactions" element={<RequireResult><TransactionsPage /></RequireResult>} />
+          <Route path="/risk" element={<RequireResult><RiskAnalysisPage /></RequireResult>} />
+          <Route path="/live" element={<LiveTrackingPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </div>
+    </div>
+  );
 }
 
 export default function App() {
@@ -29,10 +55,11 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [selectedNode, setSelectedNode] = useState(null);
 
-  const showToast = (message, type = 'info') => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 4000);
-  };
+  const showToast = useCallback((message, type = 'info') => {
+    const id = Date.now();
+    setToast({ id, message, type });
+    setTimeout(() => setToast((t) => (t && t.id === id ? null : t)), 4000);
+  }, []);
 
   const ctx = {
     ...analysis,
@@ -46,16 +73,10 @@ export default function App() {
   return (
     <AppContext.Provider value={ctx}>
       <BrowserRouter>
-        <AppNavbar />
-        <Routes>
-          <Route path="/" element={analysis.result ? <Dashboard /> : <LandingPage />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/graph" element={<GraphPage />} />
-          <Route path="/transactions" element={<TransactionsPage />} />
-          <Route path="/risk" element={<RiskAnalysisPage />} />
-          <Route path="/live" element={<LiveTrackingPage />} />
-        </Routes>
-        {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+        <Shell />
+        <AnimatePresence>
+          {toast && <Toast key={toast.id} message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+        </AnimatePresence>
       </BrowserRouter>
     </AppContext.Provider>
   );
